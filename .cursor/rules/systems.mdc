@@ -1,92 +1,108 @@
 ---
-description: Core and viewer systems architecture
-globs: packages/core/src/systems/**,packages/viewer/src/systems/**
+description: Core, viewer, and editor systems architecture
+globs: packages/core/src/systems/**,packages/viewer/src/systems/**,packages/editor/src/components/systems/**
 alwaysApply: false
 ---
 
 # Systems
 
-Systems own business logic, geometry generation, and constraints. They run in the Three.js frame loop and are never rendered directly.
+Systems coordinate derived data, rendering side effects, and editor-only scene feedback. They are never user-facing UI panels. The project has three scopes: core helpers/systems, viewer systems, and editor-injected systems.
 
-## Two Kinds of Systems
+## Three Kinds of Systems
 
-### Core Systems — `packages/core/src/systems/`
+### Core Systems and Helpers - `packages/core/src/systems/`
 
-Pure logic: no rendering, no Three.js objects. They read nodes from `useScene`, compute derived values (geometry, constraints), and write results back.
+Pure domain logic: no rendering, no Three.js objects, and no editor/viewer imports. Core owns topology, constraints, schema-level derivations, and data-only geometry helpers.
 
-| System | Responsibility |
+Examples:
+
+| Module | Responsibility |
 |---|---|
-| `WallSystem` | Wall mitering, corner joints |
-| `SlabSystem` | Polygon-based floor/roof generation |
-| `CeilingSystem` | Polygon-based ceiling generation |
-| `RoofSystem` | Pitched roof shape |
-| `DoorSystem` | Placement constraints on walls |
-| `WindowSystem` | Placement constraints on walls |
-| `ItemSystem` | Item transforms, collision |
+| `wall/wall-footprint` | Wall footprint and thickness math |
+| `wall/wall-curve` | Curved wall sampling and clamping math |
+| `wall/wall-mitering` | Wall mitering and corner joints |
+| `stair/stair-opening-sync` | Stair slab/ceiling opening synchronization |
 
-### Viewer Systems — `packages/viewer/src/systems/`
+Core code may produce plain arrays, polygons, transforms, or patch data. It must not produce or mutate `THREE.Object3D` instances.
 
-Access Three.js objects (via `useRegistry`) and manage rendering side-effects.
+### Viewer Systems - `packages/viewer/src/systems/`
+
+Viewer systems run inside `<Viewer>`, can access Three.js objects through `sceneRegistry`, and manage render-facing side effects. They may generate Three.js `BufferGeometry`, materials, cutouts, merged meshes, object transforms, and render-only presentation artifacts.
+
+Examples:
 
 | System | Responsibility |
 |---|---|
 | `LevelSystem` | Stacked / exploded / solo / manual level positions |
+| `WallSystem` | Wall mesh geometry and render material updates |
+| `SlabSystem` / `CeilingSystem` | Three.js slab/ceiling geometry updates |
+| `RoofSystem` | Three.js roof segment and merged roof geometry |
 | `WallCutout` | Cuts door/window holes in wall geometry |
 | `ZoneSystem` | Zone display and label placement |
 | `InteractiveSystem` | Item toggles and sliders in the scene |
-| `GuideSystem` | Temporary helper geometry |
-| `ScanSystem` | Point cloud rendering |
+| `GuideSystem` / `ScanSystem` | Temporary helper geometry and point clouds |
+
+Viewer systems must not know about editor phases, tools, paint mode, floorplan state, or `useEditor`.
+
+### Editor Systems - `packages/editor/src/components/systems/`
+
+Editor systems are editor-specific behavior injected as children of `<Viewer>` from the editor package. They can use `useEditor`, `useViewer`, `useScene`, and editor helpers.
+
+Examples include selection affordances, edit handles, label editing, paint preview support, and tool feedback that is absent from the read-only viewer route.
 
 ## Pattern
 
-Systems are React components that render nothing (`return null`) and use `useFrame` for per-frame logic.
+Viewer and editor systems are React components that render nothing (`return null`) or render only local helper objects. They often use `useFrame` for per-frame work.
 
 ```tsx
-// packages/core/src/systems/my-system.tsx
+// packages/viewer/src/systems/my-system.tsx
 import { useFrame } from '@react-three/fiber'
-import { useScene } from '../store/use-scene'
+import { sceneRegistry, useScene } from '@pascal-app/core'
 
 export function MySystem() {
-  const nodes = useScene(s => s.nodes)
-
   useFrame(() => {
-    // compute and write back derived state
+    const nodes = useScene.getState().nodes
+    const obj = sceneRegistry.nodes.get('some-id')
+    // update render-side objects from scene data
   })
 
   return null
 }
 ```
 
+Core helpers are ordinary TypeScript functions and should be testable without React, Three.js, or R3F.
+
 Core and viewer systems are mounted inside `<Viewer>` alongside renderers. See @packages/viewer/src/components/viewer/index.tsx for the mount order.
 
-**Systems are a customization point.** Any consumer of `<Viewer>` — the editor app, an embed, a read-only preview — can inject its own systems as children. This is how editor-specific behaviour (space detection, tool feedback) is added without touching the viewer package.
+**Systems are a customization point.** Consumers of `<Viewer>` can inject their own systems as children. The editor uses this to add editor-specific behavior without modifying `@pascal-app/viewer`.
 
 ## Rules
 
-- **Core systems must not import Three.js** — they work with plain data.
-- **Viewer systems must not contain business logic** — delegate to core if the rule is domain-level.
-- **Never duplicate logic** between a system and a renderer — if the renderer needs it, the system should compute and store it, and the renderer reads the result.
-- Systems should be **idempotent**: given the same nodes, they produce the same output.
+- **Core systems/helpers must not import Three.js, R3F, viewer, or editor.** They work with plain scene data and pure data structures.
+- **Viewer systems must not contain editor-only logic.** Phase, mode, active tool, paint mode, floorplan state, and editor UI vocabulary belong in `packages/editor`.
+- **Domain rules should live in core when they can be expressed without Three.js.** Keep reusable topology, placement constraints, schema derivations, and collision rules in core. Let viewer systems convert those results into Three.js geometry or material changes.
+- **Renderer components should not duplicate system logic.** If derived render geometry or side effects are reused or expensive, compute/update them in a system and have renderers read the result.
+- Systems should be **idempotent**: given the same scene data and registry state, they produce the same visible result.
 - Mark nodes as `dirty` in the scene store to signal that a system should re-run. Avoid running expensive logic every frame without a dirty check.
 
 ## Adding a New System
 
 1. Decide the scope:
-   - **Domain logic** → `packages/core/src/systems/`
-   - **Viewer rendering side-effect** → `packages/viewer/src/systems/` — mount in `packages/viewer/src/components/viewer/index.tsx`
-   - **Editor-specific or integration-specific** → keep it in the consuming app (e.g. `apps/editor/components/systems/`) and inject it as a child of `<Viewer>`
+   - **Pure domain logic or data-only derived helpers** -> `packages/core/src/systems/`
+   - **Viewer render side effect or Three.js geometry/material updates** -> `packages/viewer/src/systems/`, mounted in `packages/viewer/src/components/viewer/index.tsx`
+   - **Editor-specific or integration-specific behavior** -> `packages/editor/src/components/systems/`, injected as a child of `<Viewer>`
 
-2. Create `<name>-system.tsx` in the appropriate directory.
+2. Create `<name>-system.tsx` for React systems, or a focused `.ts` helper module for pure core logic.
 
 3. Mount it in the right place:
    - Viewer-internal systems go in `packages/viewer/src/components/viewer/index.tsx`
-   - App-specific systems are injected as children from outside:
+   - Editor-specific systems are injected from the editor package:
      ```tsx
-     // apps/editor — editor injects its own systems without modifying the viewer
-     <Viewer>
+     // packages/editor - editor injects systems without modifying viewer internals
+     <Viewer selectionManager="custom">
        <MyEditorSystem />
        <ToolManager />
      </Viewer>
      ```
 
-4. **Mount order matters.** Most viewer systems run *after* renderers in the JSX tree — they consume `sceneRegistry` data that renderers populate on mount. Only place a system before renderers if it explicitly does not read the registry.
+4. **Mount order matters.** Most viewer systems run after renderers in the JSX tree because they consume `sceneRegistry` data that renderers populate on mount. Only place a system before renderers if it explicitly does not read the registry.

@@ -1,14 +1,16 @@
 ---
-description: Typed event bus — emitting and listening to node and grid events
-globs: packages/core/src/events/**,packages/viewer/**,apps/editor/**
+description: Typed event bus for node and grid interaction events
+globs: packages/core/src/events/**,packages/viewer/**,packages/editor/**,apps/editor/**
 alwaysApply: false
 ---
 
 # Events
 
-The event bus (`emitter`) is a global `mitt` instance typed with `EditorEvents`. It decouples renderers (which emit) from selection managers and tools (which listen).
+The event bus (`emitter`) is a global `mitt` instance typed with interaction events. It decouples renderers (which emit) from selection managers, tools, and systems (which listen).
 
 **Source**: @packages/core/src/events/bus.ts
+
+The event bus is a narrow core interaction bridge. It is allowed to type payloads with R3F/Three interaction types such as `ThreeEvent` and `Object3D`, but it must not import `@pascal-app/viewer`, `@pascal-app/editor`, or app code. Core schema, stores, and core systems remain pure unless another rule explicitly grants an exception.
 
 ## Event Key Format
 
@@ -19,33 +21,37 @@ The event bus (`emitter`) is a global `mitt` instance typed with `EditorEvents`.
 Example keys: `wall:click`, `item:enter`, `door:double-click`, `grid:pointerdown`
 
 ### Node Types
-`wall` `item` `site` `building` `level` `zone` `slab` `ceiling` `roof` `window` `door`
+
+`site` `building` `level` `wall` `fence` `item` `zone` `slab` `spawn` `ceiling` `column` `roof` `roof-segment` `stair` `stair-segment` `window` `door`
 
 ### Suffixes
+
 ```ts
 'click' | 'move' | 'enter' | 'leave' | 'pointerdown' | 'pointerup' | 'context-menu' | 'double-click'
 ```
 
-The `grid:*` events fire when the user interacts with empty space (no node hit). They are **not** emitted by a mesh — `useGridEvents(gridY)` (@apps/editor/hooks/use-grid-events.ts) manually raycasts against a ground plane and calls `emitter.emit('grid:click', …)`. Mount it in any tool or editor component that needs empty-space interactions.
+The `grid:*` events fire when the user interacts with empty space (no node hit). They are not emitted by a mesh. `useGridEvents(gridY)` manually raycasts against a ground plane and calls `emitter.emit('grid:click', ...)`. Mount it in any tool or editor component that needs empty-space interactions.
 
 ## NodeEvent Shape
 
 ```ts
 interface NodeEvent<T extends AnyNode = AnyNode> {
-  node: T                                  // typed node that triggered the event
-  position: [number, number, number]       // world-space hit position
-  localPosition: [number, number, number]  // object-local hit position
-  normal?: [number, number, number]        // face normal, if available
+  node: T
+  position: [number, number, number]
+  localPosition: [number, number, number]
+  normal?: [number, number, number]
+  faceIndex?: number
+  object: Object3D
   stopPropagation: () => void
   nativeEvent: ThreeEvent<PointerEvent>
 }
 ```
 
-Grid events only carry `position` and `nativeEvent` (no `node`).
+Grid events carry `position`, `localPosition`, and `nativeEvent`; they do not carry a node.
 
 ## Emitting
 
-Renderers emit via `useNodeEvents` — never call `emitter.emit` directly in a renderer:
+Renderers emit via `useNodeEvents`; never call `emitter.emit` directly in a renderer:
 
 ```tsx
 // packages/viewer/src/hooks/use-node-events.ts
@@ -57,31 +63,22 @@ return <mesh ref={ref} {...events} />
 
 ## Listening
 
-Listen in a `useEffect`. Always clean up with `emitter.off` using the **same function reference**:
+Listen in a `useEffect`. Always clean up with `emitter.off` using the same function reference:
 
 ```ts
-// Single event
 useEffect(() => {
-  const handler = (e: WallEvent) => { /* … */ }
+  const handler = (e: WallEvent) => { /* ... */ }
   emitter.on('wall:click', handler)
   return () => emitter.off('wall:click', handler)
 }, [])
-
-// Multiple node types, same handler
-useEffect(() => {
-  const types = ['wall', 'slab', 'door'] as const
-  const handler = (e: NodeEvent) => { /* … */ }
-  types.forEach(t => emitter.on(`${t}:click`, handler as any))
-  return () => types.forEach(t => emitter.off(`${t}:click`, handler as any))
-}, [])
 ```
 
-See @apps/editor/components/editor/selection-manager.tsx for a full multi-type listener example.
+See @packages/editor/src/components/editor/selection-manager.tsx and @packages/viewer/src/components/viewer/selection-manager.tsx for multi-type listener examples.
 
 ## Rules
 
 - **Renderers only emit, never listen.** Listening belongs in selection managers, tools, or systems.
 - **Always clean up.** Forgetting `emitter.off` causes duplicate handlers and memory leaks.
-- **Use the same function reference** for `on` and `off`. Anonymous functions inside `useEffect` are fine as long as the ref is captured in the same scope.
-- **Don't use emitter for state.** It's for one-shot interaction events. Persistent state goes in `useScene`, `useViewer`, or `useEditor`.
-- **`stopPropagation`** prevents the event from being handled by overlapping listeners (e.g. a door on a wall). Call it when a handler should be the final consumer.
+- **Use the same function reference** for `on` and `off`. Anonymous functions inside `useEffect` are fine as long as the reference is captured in the same scope.
+- **Do not use emitter for state.** It is for one-shot interaction events. Persistent state goes in `useScene`, `useViewer`, or `useEditor`.
+- **`stopPropagation`** prevents the event from being handled by overlapping listeners, such as a door on a wall. Call it when a handler should be the final consumer.

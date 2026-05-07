@@ -6,10 +6,7 @@ alwaysApply: false
 
 # Creating Rules
 
-Rules live in two places and are kept in sync via symlinks:
-
-- `.cursor/rules/<rule-name>.mdc` — source of truth (Cursor format)
-- `.claude/rules/<rule-name>.md` — symlink pointing to the cursor file
+Rules live in `.cursor/rules/*.mdc`; that is the source of truth. Compatibility files in `.claude/rules/*.md` and `.codex/rules/*.md` should point to the same Cursor rule source so every agent reads the same policy.
 
 ## Workflow
 
@@ -19,20 +16,19 @@ Rules live in two places and are kept in sync via symlinks:
 .cursor/rules/my-rule.mdc
 ```
 
-**2. Create a symlink in `.claude/rules/`**
+**2. Expose compatibility paths**
 
-```bash
-ln -s ../../.cursor/rules/my-rule.mdc .claude/rules/my-rule.md
+The compatibility files should point two levels up to the Cursor rule:
+
+```text
+../../.cursor/rules/my-rule.mdc
 ```
 
-The `../../` prefix is required because the symlink lives two levels deep.
+This repository may use lightweight pointer files instead of filesystem symlinks. If a `.codex/rules/*.md` or `.claude/rules/*.md` file contains only a relative path, continue reading the referenced `.cursor/rules/*.mdc` file.
 
 **3. Verify**
 
-```bash
-ls -la .claude/rules/my-rule.md
-# → .claude/rules/my-rule.md -> ../../.cursor/rules/my-rule.mdc
-```
+Read the compatibility file and confirm it resolves to the intended `.cursor/rules/*.mdc` source.
 
 ## Rule File Format
 
@@ -53,27 +49,31 @@ Concrete guidance with examples.
 ```
 
 - Set `alwaysApply: true` only for rules that apply to every file in the project.
-- Use `globs` to scope a rule to specific paths (e.g. `packages/viewer/**`).
-
-## Good Practices
-
+- Use `globs` to scope a rule to specific paths, such as `packages/viewer/**`.
 - Keep rules under 500 lines. Split large rules into smaller focused files.
 - Include concrete examples or reference real files with `@filename`.
-- Add a rule when the same mistake has been made more than once — not preemptively.
+- Add a rule when the same mistake has been made more than once, not preemptively.
 - Prefer showing a correct example over listing prohibitions.
+
+## Current Layer Model
+
+- `packages/core` owns schema, scene data, pure logic, and narrow interaction bridges explicitly documented in the rules.
+- `packages/viewer` owns the reusable viewer canvas, renderers, viewer systems, and viewer presentation state.
+- `packages/editor` owns reusable editor features, tools, panels, floorplan, paint mode, editor systems, and editor state.
+- `apps/editor` is the Next.js host shell around the reusable packages.
 
 ## Existing Rules
 
 | Rule | Covers |
 |---|---|
-| `creating-rules` | This file — how to add rules |
+| `creating-rules` | This file: how to add and expose rules |
 | `renderers` | Node renderer pattern in `packages/viewer` |
-| `systems` | Core and viewer systems architecture |
-| `tools` | Editor tools structure in `apps/editor` |
+| `systems` | Core, viewer, and editor systems architecture |
+| `tools` | Editor tools structure in `packages/editor` |
 | `viewer-isolation` | Keeping `@pascal-app/viewer` editor-agnostic |
-| `scene-registry` | Global node ID → Object3D map and `useRegistry` |
-| `selection-managers` | Two-layer selection (viewer + editor), events, outliner |
-| `events` | Typed event bus — emitting and listening to node and grid events |
+| `scene-registry` | Global node ID to Object3D map and `useRegistry` |
+| `selection-managers` | Viewer/editor selection, events, outliner |
+| `events` | Typed event bus for node and grid interaction events |
 | `node-schemas` | Zod schema pattern for node types, createNode, updateNode |
 | `spatial-queries` | Placement validation (canPlaceOnFloor/Wall/Ceiling) for tools |
 | `layers` | Three.js layer constants, ownership, and rendering separation |
