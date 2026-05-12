@@ -1,19 +1,21 @@
 ---
 name: review-architecture
-description: Review a PR against the Pascal architectural rules — layer boundaries (core/viewer/editor), systems/renderers/tools separation, hook hygiene (useEditor/useScene/useViewer), and selector performance. Use when the user asks to review a PR, audit a branch, or check that changes respect the codebase's architecture.
+description: "Review a PR, branch, or local diff against the Pascal architectural rules: core/viewer/editor package boundaries, systems/renderers/tools separation, viewer isolation, event/registry bridge exceptions, hook hygiene, and selector performance. Use when the user asks to review a PR, audit a branch, or check architecture compliance."
 allowed-tools: Bash(git *) Bash(gh *) Read Grep Glob
 ---
 
-Architectural review for Pascal PRs. The user will provide a PR URL, branch name, or ask to review the current branch.
+# Pascal Architecture Review
 
-## 1. Load the rules (required — do not skip)
+Use this skill for architecture-sensitive Pascal reviews. The user may provide a PR URL, branch name, or ask to review the current branch.
 
-Read these before reviewing any diff. They are the source of truth, not your training data:
+## 1. Load the Rules
 
-- `.claude/rules/systems.md` — core systems vs viewer systems, what each may do
-- `.claude/rules/renderers.md` — renderer responsibilities and prohibitions
-- `.claude/rules/tools.md` — editor tools live only in `apps/editor/components/tools/`
-- `.claude/rules/viewer-isolation.md` — viewer must stay editor-agnostic
+Read the canonical rules before reviewing any diff. They are the source of truth, not model memory:
+
+- `.claude/rules/systems.md`
+- `.claude/rules/renderers.md`
+- `.claude/rules/tools.md`
+- `.claude/rules/viewer-isolation.md`
 - `.claude/rules/layers.md`
 - `.claude/rules/selection-managers.md`
 - `.claude/rules/scene-registry.md`
@@ -21,9 +23,11 @@ Read these before reviewing any diff. They are the source of truth, not your tra
 - `.claude/rules/node-schemas.md`
 - `.claude/rules/events.md`
 
-Only the first four are required on every review; read the rest when the diff touches their subject area.
+The first four are required on every architecture review. Read the remaining rules when the diff touches their subject area.
 
-## 2. Fetch the diff
+Compatibility files in `.claude/rules/*.md` may contain only a relative path such as `../../.cursor/rules/systems.mdc`. If so, continue reading that referenced `.cursor/rules/*.mdc` file before reviewing.
+
+## 2. Fetch the Diff
 
 ```bash
 # If the user gave a PR URL or number:
@@ -41,76 +45,101 @@ gh pr view <pr> --json files --jq '.files[].path'
 git diff --name-only main...HEAD
 ```
 
-## 3. Layer classification — do this BEFORE the checklist
+If there is no branch diff and the user asks for a project audit, use targeted scans against the rule globs instead of treating the whole repository as one giant diff.
 
-For every new file, new type, new store field, or new exported helper introduced by the diff, answer one question: **which layer does this belong to — core, viewer, or editor?** If the answer is "editor" but the code lives in `packages/core` or `packages/viewer` (or vice versa), flag it as a **blocker**. This is the most common and most damaging class of violation, and the checklist below won't reliably catch it on its own — do this pass explicitly.
+## 3. Classify New Surfaces First
 
-### The three layers and what they own
+Before writing findings, classify every new file, type, store field, exported helper, system, renderer, and tool introduced by the diff:
 
-**`packages/core` — domain data + pure logic.**
-Owns: node schemas, the scene store (`useScene`), live transforms store, core systems (wall mitering, slab polygons, space detection), event bus, plain 2D/3D math helpers, `sceneRegistry`. Consumed by every downstream package, including read-only embeds. Must not know about: Three.js/R3F, `packages/viewer`, `apps/editor`, any rendering or UI concept, any tool/mode/phase concept, or any *view*-specific concept (floorplan, paint preview, cursor indicators, selection outline styling, etc.).
+- **Core**: `packages/core`
+- **Viewer**: `packages/viewer`
+- **Editor**: `packages/editor`
+- **Host app**: `apps/editor`
 
-**`packages/viewer` — the 3D canvas, shippable standalone.**
-Owns: `<Viewer>`, renderers, viewer systems (cutouts, zones, level positions, scans), the viewer store (`useViewer`) *for genuine presentation state only* (selection path, camera/level/wall/view modes, theme, display toggles, hover id). Consumed by both the editor and the read-only `/viewer/[id]` route. Must not know about: editor state (`useEditor`, tools, phases, modes), editor-only names baked into presentation modes (`'delete'`, `'paint-ready'`), editor-only state types (material preview, active paint target, floorplan anything).
+If a surface belongs to one layer but lives in another, flag it before downstream symptoms. Layer-boundary blockers lead the review.
 
-**`apps/editor` (and editor-scoped packages) — the editing experience.**
-Owns: tools, `useEditor`, action menus, panels, the floorplan panel and its helpers, paint mode, selection-manager phase/mode logic, cursor badges, command palette, keyboard shortcuts — anything absent from the read-only viewer route. Injects itself into `<Viewer>` via children and props, never the reverse.
+### Current Layer Model
 
-### Five triggers that mean "this is probably editor"
+**`packages/core` - domain data, pure logic, and narrow bridges.**
 
-1. **Would the read-only `/viewer/[id]` route need this?** If no, it belongs in `apps/editor`.
-2. **Does the name contain an editor-specific word?** (`Floorplan`, `Paint…`, `Draft…`, `Marquee`, `CursorBadge`, `HoverMode`, `…Tool`, `Moving…`, `Curving…`.) Default to editor and justify loudly if it's anywhere else.
-3. **Does the type or field reference a tool/mode/phase vocabulary?** (`'delete'`, `'paint-ready'`, `'material-paint'`, `'site'`/`'structure'`/`'furnish'`, `'build'`/`'edit'`.) Belongs in `useEditor`, not `useViewer` or core.
-4. **Does the helper compute something only a 2D editor view needs?** (Floorplan transforms, measurement offsets, SVG path builders, marquee bounds scoped to floorplan.) Editor. Generic 2D geometry that any view could use (polygon math, rotation, clamping, line thickening) can live in core *as long as its names are generic* — no `Floorplan` prefix.
-5. **Does a new store field have a setter that no part of the target layer ever calls?** (e.g. `setMaterialPreview` in `useViewer` that only the editor would ever invoke.) That's a layering smell — the state belongs in the caller's layer.
+Owns schemas, scene store, live transforms store, pure geometry/topology helpers, placement/collision logic, material/domain helpers, event bus, and scene registry.
 
-Write the classification down before writing findings. If core gains "Floorplan" types, or the viewer gains paint-mode vocabulary, or a renderer grows editor awareness — those are the blockers to lead with, not downstream symptoms.
+Must not import `packages/viewer`, `packages/editor`, or `apps/editor`. Core systems/helpers must not depend on Three.js or R3F. The explicit exceptions are narrow interaction bridges documented by rules:
 
-## 4. Review checklist
+- `packages/core/src/events/**` may type interaction payloads with R3F/Three types.
+- `packages/core/src/hooks/scene-registry/**` may type live `THREE.Object3D` registry entries.
 
-### A. Layer boundaries
-- `packages/viewer/**` does not import from `apps/editor` or reference `useEditor`, tool state, phase, or mode.
-- `packages/core/**` does not import Three.js, react-three-fiber, or anything from `packages/viewer` / `apps/editor`.
-- `packages/core/**` does not introduce types or helpers named after an editor view (`Floorplan*`, `Paint*`, `Draft*`). Generic plan-geometry helpers are fine; view-specific vocabulary is not.
-- Renderers contain no geometry generation or domain logic — that belongs in a system.
-- Tools mutate `useScene` (committed state) and `useLiveTransforms` (ephemeral drag state); direct `sceneRegistry` mesh transforms are allowed only under the live-drag exception in `.claude/rules/tools.md`. No business logic, no imports from `packages/viewer`.
+Those exceptions do not permit domain logic to depend on live Three objects.
 
-### B. Hook hygiene (`useEditor`, `useScene`, `useViewer`)
-- Stores hold state + setters only. No business logic, side effects, async work, or derived computations inside the store definition.
-- Derived values belong in selectors or systems, not in the store body.
-- No cross-store coupling: a store's action should not call another store's actions inside itself.
-- New state added to `useViewer` must be presentation-only (selection, camera, level mode, display toggles). Editor-only state (active tool, phase, edit mode, paint preview, floorplan state) goes in `useEditor`.
+**`packages/viewer` - standalone 3D canvas and presentation state.**
 
-### C. Selector performance
-- Top-level components (pages, layouts, providers, `<Viewer>` siblings) must not subscribe to large or frequently-changing slices — e.g. `useScene(s => s.nodes)`, `useScene(s => s)`. Flag these: they re-render the whole subtree on every mutation.
-- Selectors that return new object or array references each call (e.g. `s => ({ a: s.a, b: s.b })`, `s => s.items.filter(...)`) without a custom equality function (shallow or custom) are re-render hazards.
-- Prefer subscribing by ID deep in the tree (one node per renderer) over subscribing to the full collection high up.
+Owns `<Viewer>`, renderers, viewer systems, viewer store (`useViewer`), post-processing, camera controls, and render-facing materials/geometry helpers. It must stay usable without the editor package.
 
-### D. Separation of concerns
-- Viewer and core stay unaware of editor-specific concepts (tools, phases, active modes, editor UI state, view-specific helpers).
-- Editor-only overlays and systems are injected as children of `<Viewer>`, not added inside the viewer package.
-- New node types added correctly: schema → core system (if derived geometry) → viewer renderer → register in `NodeRenderer`.
+Must not import `@pascal-app/editor`, `packages/editor`, `apps/editor`, `useEditor`, tools, phases, floorplan state, paint mode, editor panels, or editor UI vocabulary.
 
-## 5. Output format
+**`packages/editor` - reusable editing experience.**
+
+Owns tools, `useEditor`, panels, floorplan, paint mode, editor selection manager, editor systems, command palette, action menus, cursor badges, keyboard shortcuts, and editor-specific overlays.
+
+May consume public APIs from `@pascal-app/core` and `@pascal-app/viewer`, including `Viewer`, `useViewer`, viewer material helpers, and viewer control props. Editor features are injected into `<Viewer>` via props and children.
+
+**`apps/editor` - Next.js host shell.**
+
+Owns routes, API endpoints, app-level persistence/integration, and package composition. Reusable editor behavior should live in `packages/editor`, not in the app shell.
+
+## 4. Review Checklist
+
+### A. Layer Boundaries
+
+- `packages/viewer/**` does not import editor package/app code and does not reference editor-only concepts.
+- `packages/core/**` does not import viewer/editor/app code.
+- Core bridges (`events`, `scene-registry`) stay narrow and do not pull business logic into live Three objects.
+- `packages/editor/**` owns editor behavior and injects it into `<Viewer>` via props/children.
+- `apps/editor/**` stays a host shell and does not become the home for reusable tools/systems.
+
+### B. Systems, Renderers, Tools
+
+- Renderers register objects, emit node events, and render node-level objects. Reusable derived geometry or expensive side effects belong in systems.
+- Core helpers/systems own reusable domain logic that can be expressed without Three.js.
+- Viewer systems own Three.js `BufferGeometry`, mesh/material mutation, cutouts, merged meshes, and render-side side effects.
+- Editor systems own editor-only feedback, edit affordances, labels, paint previews, and tool-related behavior.
+- Tools mutate `useScene` for committed state and `useLiveTransforms` for previews. Direct mesh transforms are allowed only under the live-drag exception in `.claude/rules/tools.md`.
+- Tools may read public `useViewer` presentation state, but must not import viewer internals or place editor-only state in `useViewer`.
+
+### C. Hook Hygiene
+
+- Stores hold state plus setters only. Avoid business logic, side effects, async work, and expensive derived computations inside store definitions.
+- Derived values belong in selectors, systems, or helpers.
+- Avoid cross-store coupling inside store actions. It is usually better to coordinate from a component/system.
+- New `useViewer` state must be presentation-only. Editor-only state belongs in `useEditor`.
+
+### D. Selector Performance
+
+- Top-level components should not subscribe to large or frequently changing slices such as `useScene((s) => s.nodes)` unless the component is intentionally a renderer/sync boundary.
+- Selectors that return fresh objects or arrays each call need shallow/custom equality or a different shape.
+- Prefer subscribing by ID deep in the tree over subscribing to full collections high up.
+- Outliner arrays should be mutated in place, not replaced.
+
+## 5. Output Format
 
 Group findings by severity:
 
-- **Blocker** — violates a rule in `.claude/rules` or breaks a layer boundary. Must be fixed before merge.
-- **Suggestion** — likely problem, worth discussing. Not a hard block.
-- **Nit** — minor, optional.
+- **Blocker**: violates a rule or breaks a layer boundary. Must be fixed before merge.
+- **Suggestion**: likely problem or maintainability risk worth discussing.
+- **Nit**: minor and optional.
 
 For each finding, include:
 
 1. File and line: `path/to/file.ts:42`
-2. The offending snippet (short — 1–5 lines)
-3. The rule it violates, linked to the rule file (e.g. `.claude/rules/viewer-isolation.md`)
+2. The offending snippet, short enough to orient the author
+3. The rule it violates, linked to the rule file
 4. A concrete proposed fix
 
-Skip formatting, import ordering, and anything CI already covers.
+Skip formatting, import ordering, and anything CI already covers unless it hides a real behavior or architecture issue.
 
-If the PR fully complies, say so explicitly — do not invent nits to appear thorough.
+If the PR complies, say so explicitly. Do not invent nits to appear thorough.
 
-## 6. Final summary
+## 6. Final Summary
 
 End with:
 
