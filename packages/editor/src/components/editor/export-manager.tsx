@@ -60,8 +60,12 @@ export function ExportManager() {
 
     setExportScene(exportFn)
 
+    // Expose for Playwright / automation
+    ;(window as any).__pascalExportGLB = () => exportFn('glb')
+
     return () => {
       setExportScene(null)
+      delete (window as any).__pascalExportGLB
     }
   }, [scene, setExportScene])
 

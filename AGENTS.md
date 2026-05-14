@@ -1,51 +1,67 @@
-# Agent Instructions — `pascalorg/editor`
+# Agent Instructions - `pascalorg/editor`
 
-Public, open-source home of `@pascal-app/{core,viewer,editor,mcp}` and the standalone editor app. Consumed both as npm packages and (in `pascalorg/private-editor`) as a git submodule.
+Public, open-source home of `@pascal-app/{core,viewer,editor,mcp}` and the standalone editor app. Consumed both as npm packages and, in `pascalorg/private-editor`, as a git submodule.
 
 ## Repo Shape
 
 | Path | Purpose |
-|---|---|
-| `packages/core` | Scene graph, node schemas, stores, event bus, core systems — pure logic, no Three.js |
-| `packages/viewer` | Standalone 3D canvas: renderers, viewer systems, presentation state |
-| `packages/editor` | Editor UI components reused by the standalone app and embedders |
-| `packages/mcp` | MCP server and scene storage adapters |
-| `apps/editor` | Standalone editor app — composes `viewer` + `editor` + tools |
+| --- | --- |
+| `packages/core` | Scene graph, node schemas, stores, event bus, core systems, and pure domain logic. |
+| `packages/viewer` | Standalone 3D canvas: renderers, viewer systems, presentation state, and render-facing geometry/material helpers. |
+| `packages/editor` | Reusable editing experience: tools, `useEditor`, panels, floorplan, paint mode, command palette, and editor-only systems. |
+| `packages/mcp` | MCP server, scene operations, scene storage adapters, and agent-facing resources/tools. |
+| `apps/editor` | Standalone Next.js host shell: routes, API endpoints, persistence integration, and package composition. |
 
-## Where to look
+## Where To Look
 
-- **Architecture rules** — `wiki/architecture/` (read on demand; index in `wiki/architecture/README.md`).
-- **Skills (ready workflows)** — `.agents/skills/<name>/SKILL.md`. Same content is reachable as `.claude/skills/`, `.cursor/skills/`, `.codex/skills/` (symlinks to `.agents/skills/`).
-- **Repo orientation for humans** — `README.md`, `SETUP.md`, `CONTRIBUTING.md`.
+- **Architecture rules** - `wiki/architecture/` is the canonical rule source. Start with `wiki/architecture/README.md`.
+- **Skills** - `.agents/skills/<name>/SKILL.md`. Compatibility paths for Claude, Cursor, and Codex point back to `.agents/skills/`.
+- **Repo orientation for humans** - `README.md`, `SETUP.md`, `CONTRIBUTING.md`.
+- **Documentation drift protocol** - `DOCUMENTATION-CONTRACT.md`.
 
-`CLAUDE.md`, `GEMINI.md`, and `.github/copilot-instructions.md` are symlinks to this file. Codex reads this file directly.
+`CLAUDE.md`, `GEMINI.md`, and `.github/copilot-instructions.md` point to this file. Codex reads this file directly.
 
-## Layer Boundaries (read once, internalise)
+## Layer Boundaries
 
-- **`packages/core`** owns domain data and pure logic. It must not import Three.js, `packages/viewer`, `apps/editor`, rendering/UI concepts, tools, modes, phases, or view-specific concepts such as floorplan or paint preview.
-- **`packages/viewer`** owns the standalone 3D canvas, renderers, viewer systems, and genuine presentation state. It must not know about `useEditor`, editor tools, phases, modes, paint mode, floorplan state, or editor-only presentation vocabulary.
-- **`apps/editor`** owns the editing experience: tools, `useEditor`, panels, floorplan helpers, paint mode, keyboard shortcuts, command palette, action menus, cursor badges, and editor-only overlays. Editor features are injected into `<Viewer>` via props and children.
+`packages/core` owns domain data, schemas, scene state, pure domain helpers, spatial queries, and narrow event/registry bridges. Core must not import viewer, editor, app shell, rendering UI, tools, phases, floorplan, or paint concepts. Three/R3F types are allowed only in the narrow bridge exceptions documented by the rule files.
 
-Details, examples, and rationale live in `wiki/architecture/layers.md`, `wiki/architecture/viewer-isolation.md`, `wiki/architecture/systems.md`, `wiki/architecture/renderers.md`, `wiki/architecture/tools.md`.
+`packages/viewer` owns the standalone 3D canvas, renderers, viewer systems, viewer presentation state, camera/display controls, and render-facing materials/geometry helpers. It must not know about `useEditor`, editor tools, phases, modes, paint mode, floorplan state, editor panels, or editor-only presentation vocabulary.
 
-## When making architecture-sensitive changes
+`packages/editor` owns the reusable editing experience: tools, `useEditor`, panels, floorplan, paint mode, editor selection manager, editor systems, command palette, action menus, keyboard shortcuts, cursor badges, and editor-specific overlays. Editor features are injected into `<Viewer>` via props and children.
 
-Read the relevant page in `wiki/architecture/` **before** writing code. The page list lives in `wiki/architecture/README.md`. As a minimum:
+`apps/editor` is the Next.js host shell. It owns routes, API endpoints, app-level persistence/integration, and package composition. Reusable editor behavior should live in `packages/editor`, not in the host app.
 
-- Adding a node type → `node-schemas.md`, `renderers.md`, `systems.md`
-- Adding a tool → `tools.md`, `spatial-queries.md`, `events.md`
-- Adding a system → `systems.md`, `scene-registry.md`
-- Anything in `packages/viewer` → `viewer-isolation.md`, `layers.md`
-- Anything touching selection → `selection-managers.md`, `scene-registry.md`, `events.md`
+Details, examples, and rationale live in `wiki/architecture/layers.md`, `wiki/architecture/viewer-isolation.md`, `wiki/architecture/systems.md`, `wiki/architecture/renderers.md`, and `wiki/architecture/tools.md`.
 
-## When reviewing a PR
+## When Making Architecture-Sensitive Changes
+
+Read the relevant page in `wiki/architecture/` before writing code. The page list lives in `wiki/architecture/README.md`. As a minimum:
+
+- Adding a node type: `node-schemas.md`, `renderers.md`, `systems.md`.
+- Adding a tool: `tools.md`, `spatial-queries.md`, `events.md`.
+- Adding a system: `systems.md`, `scene-registry.md`.
+- Anything in `packages/viewer`: `viewer-isolation.md`, `layers.md`.
+- Anything touching selection: `selection-managers.md`, `scene-registry.md`, `events.md`.
+
+## Documentation Contract Drift
+
+When changing architecture, moving files, changing package ownership, or changing setup commands, check that docs and agent instructions still match the code.
+
+Use `DOCUMENTATION-CONTRACT.md` for the drift-check protocol. In short:
+
+1. Treat `wiki/architecture/` as the architecture source of truth.
+2. Check root and package README files, `AGENTS.md`, compatibility skill paths, and project skills.
+3. Fix confirmed factual drift with the smallest docs-only change.
+4. Do not create competing architecture sources by copying full rules into README, AGENTS, or skills.
+
+## When Reviewing A PR
 
 Invoke the `review-architecture` skill (`.agents/skills/review-architecture/SKILL.md`). It loads the required architecture pages, fetches the diff, classifies each new file by layer, and reports findings grouped by severity.
 
-## Operating rules
+## Operating Rules
 
 - Read the full file before editing. Plan all changes, then make one complete edit.
 - When the user corrects you, stop and re-read their message.
 - After two consecutive tool failures, stop and change approach.
-- Don't introduce backwards-compatibility shims, dead code, or speculative abstractions.
-- Don't write new comments unless they explain a non-obvious *why*.
+- Do not introduce backwards-compatibility shims, dead code, or speculative abstractions.
+- Do not write new comments unless they explain a non-obvious why.
