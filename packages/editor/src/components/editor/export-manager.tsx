@@ -1,6 +1,6 @@
 'use client'
 
-import { useViewer } from '@pascal-app/viewer'
+import { snapLevelsToTruePositions, useViewer } from '@pascal-app/viewer'
 import { useThree } from '@react-three/fiber'
 import { useEffect } from 'react'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
@@ -21,51 +21,71 @@ export function ExportManager() {
       }
 
       const date = new Date().toISOString().split('T')[0]
+      const restoreLevels = snapLevelsToTruePositions()
 
-      if (format === 'stl') {
-        const exporter = new STLExporter()
-        const result = exporter.parse(sceneGroup, { binary: true })
-        const blob = new Blob([result], { type: 'model/stl' })
-        downloadBlob(blob, `model_${date}.stl`)
-        return
+      try {
+        scene.updateMatrixWorld(true)
+
+        if (format === 'stl') {
+          const exporter = new STLExporter()
+          const result = exporter.parse(sceneGroup, { binary: true })
+          const blob = new Blob([result], { type: 'model/stl' })
+          downloadBlob(blob, `model_${date}.stl`)
+          return
+        }
+
+        if (format === 'obj') {
+          const exporter = new OBJExporter()
+          const result = exporter.parse(sceneGroup)
+          const blob = new Blob([result], { type: 'model/obj' })
+          downloadBlob(blob, `model_${date}.obj`)
+          return
+        }
+
+        // Default: GLB export (existing behavior)
+        const exporter = new GLTFExporter()
+
+        return new Promise<void>((resolve, reject) => {
+          exporter.parse(
+            sceneGroup,
+            (gltf) => {
+              const blob = new Blob([gltf as ArrayBuffer], { type: 'model/gltf-binary' })
+              downloadBlob(blob, `model_${date}.glb`)
+              resolve()
+            },
+            (error) => {
+              console.error('Export error:', error)
+              reject(error)
+            },
+            { binary: true },
+          )
+        })
+      } finally {
+        restoreLevels()
+        scene.updateMatrixWorld(true)
       }
-
-      if (format === 'obj') {
-        const exporter = new OBJExporter()
-        const result = exporter.parse(sceneGroup)
-        const blob = new Blob([result], { type: 'model/obj' })
-        downloadBlob(blob, `model_${date}.obj`)
-        return
-      }
-
-      // Default: GLB export (existing behavior)
-      const exporter = new GLTFExporter()
-
-      return new Promise<void>((resolve, reject) => {
-        exporter.parse(
-          sceneGroup,
-          (gltf) => {
-            const blob = new Blob([gltf as ArrayBuffer], { type: 'model/gltf-binary' })
-            downloadBlob(blob, `model_${date}.glb`)
-            resolve()
-          },
-          (error) => {
-            console.error('Export error:', error)
-            reject(error)
-          },
-          { binary: true },
-        )
-      })
     }
 
     setExportScene(exportFn)
 
     // Expose for Playwright / automation
     ;(window as any).__pascalExportGLB = () => exportFn('glb')
+    ;(window as any).__pascalExportOBJ = () => exportFn('obj')
+    ;(window as any).__pascalSceneReady = () => {
+      const sceneGroup = scene.getObjectByName('scene-renderer')
+      if (!sceneGroup) return false
+      let meshCount = 0
+      sceneGroup.traverse((child: any) => {
+        if (child.isMesh) meshCount++
+      })
+      return meshCount > 0
+    }
 
     return () => {
       setExportScene(null)
       delete (window as any).__pascalExportGLB
+      delete (window as any).__pascalExportOBJ
+      delete (window as any).__pascalSceneReady
     }
   }, [scene, setExportScene])
 

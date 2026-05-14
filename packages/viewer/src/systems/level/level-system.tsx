@@ -5,6 +5,12 @@ import useViewer from '../../store/use-viewer'
 import { getLevelHeight } from './level-utils'
 
 const EXPLODED_GAP = 5
+const LEVEL_LERP_SPEED = 12
+
+export function getLevelStepAlpha(delta: number): number {
+  if (!Number.isFinite(delta) || delta <= 0) return 0
+  return Math.min(delta * LEVEL_LERP_SPEED, 1)
+}
 
 export const LevelSystem = () => {
   useFrame((_, delta) => {
@@ -37,7 +43,7 @@ export const LevelSystem = () => {
       const explodedExtra = levelMode === 'exploded' ? index * EXPLODED_GAP : 0
       const targetY = baseY + explodedExtra
 
-      obj.position.y = lerp(obj.position.y, targetY, delta * 12) // Smoothly animate to new Y position
+      obj.position.y = lerp(obj.position.y, targetY, getLevelStepAlpha(delta))
       obj.visible = levelMode !== 'solo' || level?.id === selectedLevel || !selectedLevel
 
       cumulativeY += getLevelHeight(levelId, nodes)
