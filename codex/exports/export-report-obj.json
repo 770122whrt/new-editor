@@ -1,0 +1,17 @@
+{
+  "timestamp": "2026-05-14T10:05:44.827Z",
+  "baseUrl": "http://localhost:3002",
+  "format": "obj",
+  "total": 1,
+  "success": 1,
+  "skipped": 0,
+  "errors": 0,
+  "results": [
+    {
+      "sceneId": "6277f322fd6f",
+      "status": "ok",
+      "bytes": 538378,
+      "path": "E:\\code for project\\editor-codex-fix-514\\codex\\exports\\6277f322fd6f.obj"
+    }
+  ]
+}
