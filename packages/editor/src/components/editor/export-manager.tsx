@@ -62,10 +62,22 @@ export function ExportManager() {
 
     // Expose for Playwright / automation
     ;(window as any).__pascalExportGLB = () => exportFn('glb')
+    ;(window as any).__pascalExportOBJ = () => exportFn('obj')
+    ;(window as any).__pascalSceneReady = () => {
+      const sceneGroup = scene.getObjectByName('scene-renderer')
+      if (!sceneGroup) return false
+      let meshCount = 0
+      sceneGroup.traverse((child: any) => {
+        if (child.isMesh) meshCount++
+      })
+      return meshCount > 0
+    }
 
     return () => {
       setExportScene(null)
       delete (window as any).__pascalExportGLB
+      delete (window as any).__pascalExportOBJ
+      delete (window as any).__pascalSceneReady
     }
   }, [scene, setExportScene])
 
