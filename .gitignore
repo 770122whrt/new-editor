@@ -48,3 +48,7 @@ og-test
 
 # Worktrees
 .worktrees
+
+# Codex local artifacts
+.codex/app-dev-server.log
+.codex/npm-packs/
