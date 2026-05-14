@@ -16,6 +16,7 @@ export type FloorplanActionMenuEntry = {
   onDelete: FloorplanActionMenuHandler
   onMove: FloorplanActionMenuHandler
   onAddHole?: FloorplanActionMenuHandler
+  onCurve?: FloorplanActionMenuHandler
   onDuplicate?: FloorplanActionMenuHandler
 }
 
@@ -26,6 +27,7 @@ type FloorplanActionMenuLayerProps = {
   slab: FloorplanActionMenuEntry
   ceiling: FloorplanActionMenuEntry
   opening: FloorplanActionMenuEntry
+  spawn: FloorplanActionMenuEntry
   stair: FloorplanActionMenuEntry
   roof: FloorplanActionMenuEntry
   offsetY?: number
@@ -38,6 +40,7 @@ export const FloorplanActionMenuLayer = memo(function FloorplanActionMenuLayer({
   slab,
   ceiling,
   opening,
+  spawn,
   stair,
   roof,
   offsetY = 10,
@@ -59,6 +62,7 @@ export const FloorplanActionMenuLayer = memo(function FloorplanActionMenuLayer({
     slab,
     ceiling,
     opening,
+    spawn,
     stair,
     roof,
   ]
@@ -78,6 +82,7 @@ export const FloorplanActionMenuLayer = memo(function FloorplanActionMenuLayer({
           >
             <NodeActionMenu
               onAddHole={entry.onAddHole}
+              onCurve={entry.onCurve}
               onDelete={entry.onDelete}
               onDuplicate={entry.onDuplicate}
               onMove={entry.onMove}

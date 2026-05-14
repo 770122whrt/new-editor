@@ -83,6 +83,18 @@ const assetSchema = z.object({
   // Optional top-down 2D image shown inside the item's footprint on the
   // floor plan. When present, replaces the default diagonal-cross marker.
   floorPlanUrl: z.string().optional(),
+  // Where the item came from in the catalog. Used by the editor's items
+  // panel to filter Library / Community / Mine. The server populates it
+  // from `items.userId`: null → 'library', current user → 'mine',
+  // other user → 'community'. Defaults to 'library' when absent (e.g.
+  // the seeded built-in catalog).
+  source: z.enum(['library', 'community', 'mine']).default('library'),
+  // True when the item belongs to the caller and is still in draft status.
+  // The catalog only loads my drafts (other users' drafts are never
+  // published to the catalog). Used so the Community filter can include
+  // *my* published items alongside other users', while leaving drafts
+  // visible only under Mine.
+  isDraft: z.boolean().optional(),
   src: AssetUrl,
   dimensions: z.tuple([z.number(), z.number(), z.number()]).default([1, 1, 1]), // [w, h, d]
   attachTo: z.enum(['wall', 'wall-side', 'ceiling']).optional(),
@@ -134,6 +146,20 @@ export const ItemNode = BaseNode.extend({
 `)
 
 export type ItemNode = z.infer<typeof ItemNode>
+
+export const LOW_PROFILE_ITEM_SURFACE_MAX_HEIGHT = 0.1
+
+/**
+ * Low, floor-resting items like rugs and parking mats can receive items visually,
+ * but should not become item parents or block normal floor placement.
+ */
+export function isLowProfileItemSurface(item: ItemNode): boolean {
+  if (item.asset.attachTo) return false
+  const surfaceHeight = item.asset.surface
+    ? item.asset.surface.height * item.scale[1]
+    : getScaledDimensions(item)[1]
+  return surfaceHeight <= LOW_PROFILE_ITEM_SURFACE_MAX_HEIGHT
+}
 
 /**
  * Returns the effective world-space dimensions of an item after applying its scale.

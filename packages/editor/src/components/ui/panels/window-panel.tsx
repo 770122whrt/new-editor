@@ -4,6 +4,7 @@ import {
   type AnyNode,
   type AnyNodeId,
   emitter,
+  useInteractive,
   useScene,
   WindowNode,
 } from '@pascal-app/core'
@@ -12,9 +13,9 @@ import { BookMarked, Copy, FlipHorizontal2, Move, Trash2 } from 'lucide-react'
 import { useCallback, useRef } from 'react'
 import { usePresetsAdapter } from '../../../contexts/presets-context'
 import { sfxEmitter } from '../../../lib/sfx-bus'
+import { cn } from '../../../lib/utils'
 import useEditor from '../../../store/use-editor'
 import { ActionButton, ActionGroup } from '../controls/action-button'
-import { MetricControl } from '../controls/metric-control'
 import { PanelSection } from '../controls/panel-section'
 import { SegmentedControl } from '../controls/segmented-control'
 import { SliderControl } from '../controls/slider-control'
@@ -67,6 +68,28 @@ function isSameRadiusTuple(
   return current.every((value, index) => Math.abs(value - (next[index] ?? 0)) < 1e-6)
 }
 
+const windowTypeOptions: Array<{ label: string; value: WindowNode['windowType'] }> = [
+  { label: 'Fixed', value: 'fixed' },
+  { label: 'Sliding', value: 'sliding' },
+  { label: 'Casement', value: 'casement' },
+  { label: 'Awning', value: 'awning' },
+  { label: 'Single Hung', value: 'single-hung' },
+  { label: 'Double Hung', value: 'double-hung' },
+  { label: 'Bay', value: 'bay' },
+  { label: 'Bow', value: 'bow' },
+  { label: 'Louvered', value: 'louvered' },
+]
+
+const shapedWindowTypes = new Set<WindowNode['windowType']>([
+  'fixed',
+  'casement',
+  'awning',
+  'hopper',
+  'louvered',
+])
+
+const silllessWindowTypes = new Set<WindowNode['windowType']>(['bay', 'bow'])
+
 export function WindowPanel() {
   const selectedId = useViewer((s) => s.selection.selectedIds[0])
   const setSelection = useViewer((s) => s.setSelection)
@@ -88,14 +111,19 @@ export function WindowPanel() {
   const handleUpdate = useCallback(
     (updates: Partial<WindowNode>) => {
       if (!(selectedId && node)) return
+      const liveNode = useScene.getState().nodes[selectedId as AnyNodeId]
+      if (liveNode?.type !== 'window') return
+
       const hasChange = Object.entries(updates).some(([key, value]) => {
-        const currentValue = node[key as keyof WindowNode]
+        const currentValue = liveNode[key as keyof WindowNode]
         return !isSameWindowValue(currentValue, value)
       })
       if (!hasChange) return
 
       updateNode(selectedId as AnyNode['id'], updates)
-      useScene.getState().dirtyNodes.add(selectedId as AnyNodeId)
+      const scene = useScene.getState()
+      scene.dirtyNodes.add(selectedId as AnyNodeId)
+      if (liveNode.parentId) scene.dirtyNodes.add(liveNode.parentId as AnyNodeId)
     },
     [selectedId, node, updateNode],
   )
@@ -107,7 +135,11 @@ export function WindowPanel() {
       if (liveNode?.type !== 'window') return
 
       if (
-        !(previewRef.current && previewRef.current.id === selectedId && previewRef.current.key === key)
+        !(
+          previewRef.current &&
+          previewRef.current.id === selectedId &&
+          previewRef.current.key === key
+        )
       ) {
         previewRef.current = {
           id: selectedId as AnyNodeId,
@@ -182,6 +214,11 @@ export function WindowPanel() {
       parentId: node.parentId,
       width: node.width,
       height: node.height,
+      windowType: node.windowType,
+      operationState: node.operationState,
+      awningDirection: node.awningDirection,
+      casementStyle: node.casementStyle,
+      hingesSide: node.hingesSide,
       frameThickness: node.frameThickness,
       frameDepth: node.frameDepth,
       openingKind: node.openingKind,
@@ -210,6 +247,11 @@ export function WindowPanel() {
     return {
       width: node.width,
       height: node.height,
+      windowType: node.windowType,
+      operationState: node.operationState,
+      awningDirection: node.awningDirection,
+      casementStyle: node.casementStyle,
+      hingesSide: node.hingesSide,
       frameThickness: node.frameThickness,
       frameDepth: node.frameDepth,
       openingKind: node.openingKind,
@@ -267,13 +309,33 @@ export function WindowPanel() {
   const normRows = node.rowRatios.map((r) => r / rowSum)
   const isOpening = node.openingKind === 'opening'
   const openingShape = node.openingShape ?? 'rectangle'
-  const windowShape = openingShape === 'arch' || openingShape === 'rounded' ? openingShape : 'rectangle'
+  const windowShape =
+    openingShape === 'arch' || openingShape === 'rounded' ? openingShape : 'rectangle'
   const openingRadiusMode = node.openingRadiusMode ?? 'all'
   const openingCornerRadii = node.openingCornerRadii ?? [0.15, 0.15, 0.15, 0.15]
   const cornerRadius = node.cornerRadius ?? 0.15
   const archHeight = node.archHeight ?? 0.35
   const openingRevealRadius = node.openingRevealRadius ?? 0.025
   const maxRoundedRadius = Math.max(0.01, getMaxSharedWindowRadius(node.width, node.height))
+  const displayedWindowType = node.windowType === 'hopper' ? 'awning' : (node.windowType ?? 'fixed')
+  const awningDirection = node.windowType === 'hopper' ? 'down' : (node.awningDirection ?? 'up')
+  const isOperableWindow =
+    node.windowType === 'sliding' ||
+    node.windowType === 'casement' ||
+    node.windowType === 'awning' ||
+    node.windowType === 'hopper' ||
+    node.windowType === 'single-hung' ||
+    node.windowType === 'double-hung' ||
+    node.windowType === 'louvered'
+  const supportsWindowShape = shapedWindowTypes.has(node.windowType ?? 'fixed')
+  const supportsGrid = node.windowType === 'fixed'
+  const supportsSill = !silllessWindowTypes.has(node.windowType)
+
+  const setOperationState = (value: number) => {
+    useInteractive.getState().cancelWindowAnimation(node.id)
+    useInteractive.getState().removeWindowOpenState(node.id)
+    handleUpdate({ operationState: Math.max(0, Math.min(1, value)) })
+  }
 
   const getDimensionUpdates = (updates: Partial<Pick<WindowNode, 'width' | 'height'>>) => {
     const nextWidth = updates.width ?? node.width
@@ -292,7 +354,10 @@ export function WindowPanel() {
           nextUpdates.openingCornerRadii = nextRadii
         }
       } else {
-        const nextRadius = Math.min(Math.max(cornerRadius, 0), getMaxSharedWindowRadius(nextWidth, nextHeight))
+        const nextRadius = Math.min(
+          Math.max(cornerRadius, 0),
+          getMaxSharedWindowRadius(nextWidth, nextHeight),
+        )
         if (Math.abs(nextRadius - cornerRadius) > 1e-6) {
           nextUpdates.cornerRadius = nextRadius
         }
@@ -398,6 +463,97 @@ export function WindowPanel() {
         />
       </PanelSection>
 
+      {!isOpening && (
+        <PanelSection title="Window Type">
+          <div className="grid grid-cols-2 gap-1.5 px-1 pt-1">
+            {windowTypeOptions.map((option) => {
+              const isSelected = displayedWindowType === option.value
+              return (
+                <button
+                  className={cn(
+                    'flex min-h-12 items-center rounded-lg border px-2.5 text-left text-xs transition-colors',
+                    isSelected
+                      ? 'border-orange-400/60 bg-orange-400/10 text-foreground'
+                      : 'border-border/50 bg-[#2C2C2E] text-muted-foreground hover:bg-[#3e3e3e] hover:text-foreground',
+                  )}
+                  key={option.value}
+                  onClick={() =>
+                    handleUpdate({
+                      windowType: option.value,
+                      ...(option.value === 'awning' ? { awningDirection } : {}),
+                      ...(!shapedWindowTypes.has(option.value)
+                        ? { openingShape: 'rectangle' }
+                        : {}),
+                      ...(silllessWindowTypes.has(option.value) ? { sill: false } : {}),
+                    })
+                  }
+                  type="button"
+                >
+                  <span className="truncate font-medium">{option.label}</span>
+                </button>
+              )
+            })}
+          </div>
+          {displayedWindowType === 'awning' && (
+            <div className="mt-2">
+              <SegmentedControl
+                onChange={(value) =>
+                  handleUpdate({
+                    windowType: 'awning',
+                    awningDirection: value as WindowNode['awningDirection'],
+                  })
+                }
+                options={[
+                  { value: 'up', label: 'Up' },
+                  { value: 'down', label: 'Down' },
+                ]}
+                value={awningDirection}
+              />
+            </div>
+          )}
+          {node.windowType === 'casement' && (
+            <div className="mt-2 space-y-2">
+              <SegmentedControl
+                onChange={(value) =>
+                  handleUpdate({ casementStyle: value as WindowNode['casementStyle'] })
+                }
+                options={[
+                  { value: 'single', label: 'Single' },
+                  { value: 'french', label: 'French' },
+                ]}
+                value={node.casementStyle ?? 'single'}
+              />
+              {(node.casementStyle ?? 'single') === 'single' && (
+                <SegmentedControl
+                  onChange={(value) =>
+                    handleUpdate({ hingesSide: value as WindowNode['hingesSide'] })
+                  }
+                  options={[
+                    { value: 'left', label: 'Left' },
+                    { value: 'right', label: 'Right' },
+                  ]}
+                  value={node.hingesSide ?? 'left'}
+                />
+              )}
+            </div>
+          )}
+          {isOperableWindow && (
+            <div className="mt-2">
+              <SliderControl
+                label="Open"
+                max={1}
+                min={0}
+                onChange={setOperationState}
+                precision={2}
+                restoreOnCommit={false}
+                step={0.05}
+                value={Math.round((node.operationState ?? 0) * 100) / 100}
+              />
+            </div>
+          )}
+        </PanelSection>
+      )}
+
       <PanelSection title="Position">
         <SliderControl
           label={
@@ -458,7 +614,7 @@ export function WindowPanel() {
         />
       </PanelSection>
 
-      {!isOpening && (
+      {!isOpening && supportsWindowShape && (
         <PanelSection title="Corner Shape">
           <SegmentedControl
             onChange={(value) =>
@@ -470,6 +626,7 @@ export function WindowPanel() {
                       openingCornerRadii,
                       cornerRadius: Math.min(cornerRadius, maxRoundedRadius),
                       openingRevealRadius,
+                      sill: false,
                     }
                   : {}),
                 ...(value === 'arch' ? { archHeight } : {}),
@@ -674,128 +831,132 @@ export function WindowPanel() {
             />
           </PanelSection>
 
-          <PanelSection title="Grid">
-            <SliderControl
-              label="Columns"
-              max={8}
-              min={1}
-              onChange={(v) => {
-                const n = Math.max(1, Math.min(8, Math.round(v)))
-                handleUpdate({ columnRatios: Array(n).fill(1 / n) })
-              }}
-              precision={0}
-              step={1}
-              value={numCols}
-            />
-            <SliderControl
-              label="Rows"
-              max={8}
-              min={1}
-              onChange={(v) => {
-                const n = Math.max(1, Math.min(8, Math.round(v)))
-                handleUpdate({ rowRatios: Array(n).fill(1 / n) })
-              }}
-              precision={0}
-              step={1}
-              value={numRows}
-            />
+          {supportsGrid && (
+            <PanelSection title="Grid">
+              <SliderControl
+                label="Columns"
+                max={8}
+                min={1}
+                onChange={(v) => {
+                  const n = Math.max(1, Math.min(8, Math.round(v)))
+                  handleUpdate({ columnRatios: Array(n).fill(1 / n) })
+                }}
+                precision={0}
+                step={1}
+                value={numCols}
+              />
+              <SliderControl
+                label="Rows"
+                max={8}
+                min={1}
+                onChange={(v) => {
+                  const n = Math.max(1, Math.min(8, Math.round(v)))
+                  handleUpdate({ rowRatios: Array(n).fill(1 / n) })
+                }}
+                precision={0}
+                step={1}
+                value={numRows}
+              />
 
-            {numCols > 1 && (
-              <div className="mt-2 flex flex-col gap-1">
-                <div className="mb-1 px-1 font-medium text-[10px] text-muted-foreground/80 uppercase tracking-wider">
-                  Col Widths
+              {numCols > 1 && (
+                <div className="mt-2 flex flex-col gap-1">
+                  <div className="mb-1 px-1 font-medium text-[10px] text-muted-foreground/80 uppercase tracking-wider">
+                    Col Widths
+                  </div>
+                  {normCols.map((ratio, i) => (
+                    <SliderControl
+                      key={`c-${i}`}
+                      label={`C${i + 1}`}
+                      max={95}
+                      min={5}
+                      onChange={(v) => setColumnRatio(i, v / 100)}
+                      precision={1}
+                      step={1}
+                      unit="%"
+                      value={Math.round(ratio * 100 * 10) / 10}
+                    />
+                  ))}
+                  <div className="mt-1 border-border/50 border-t pt-1">
+                    <SliderControl
+                      label="Divider"
+                      max={0.1}
+                      min={0.005}
+                      onChange={(v) => handleUpdate({ columnDividerThickness: v })}
+                      precision={3}
+                      step={0.01}
+                      unit="m"
+                      value={Math.round((node.columnDividerThickness ?? 0.03) * 1000) / 1000}
+                    />
+                  </div>
                 </div>
-                {normCols.map((ratio, i) => (
+              )}
+
+              {numRows > 1 && (
+                <div className="mt-2 flex flex-col gap-1">
+                  <div className="mb-1 px-1 font-medium text-[10px] text-muted-foreground/80 uppercase tracking-wider">
+                    Row Heights
+                  </div>
+                  {normRows.map((ratio, i) => (
+                    <SliderControl
+                      key={`r-${i}`}
+                      label={`R${i + 1}`}
+                      max={95}
+                      min={5}
+                      onChange={(v) => setRowRatio(i, v / 100)}
+                      precision={1}
+                      step={1}
+                      unit="%"
+                      value={Math.round(ratio * 100 * 10) / 10}
+                    />
+                  ))}
+                  <div className="mt-1 border-border/50 border-t pt-1">
+                    <SliderControl
+                      label="Divider"
+                      max={0.1}
+                      min={0.005}
+                      onChange={(v) => handleUpdate({ rowDividerThickness: v })}
+                      precision={3}
+                      step={0.01}
+                      unit="m"
+                      value={Math.round((node.rowDividerThickness ?? 0.03) * 1000) / 1000}
+                    />
+                  </div>
+                </div>
+              )}
+            </PanelSection>
+          )}
+
+          {supportsSill && (
+            <PanelSection title="Sill">
+              <ToggleControl
+                checked={node.sill}
+                label="Enable Sill"
+                onChange={(checked) => handleUpdate({ sill: checked })}
+              />
+              {node.sill && (
+                <div className="mt-1 flex flex-col gap-1">
                   <SliderControl
-                    key={`c-${i}`}
-                    label={`C${i + 1}`}
-                    max={95}
-                    min={5}
-                    onChange={(v) => setColumnRatio(i, v / 100)}
-                    precision={1}
-                    step={1}
-                    unit="%"
-                    value={Math.round(ratio * 100 * 10) / 10}
-                  />
-                ))}
-                <div className="mt-1 border-border/50 border-t pt-1">
-                  <SliderControl
-                    label="Divider"
-                    max={0.1}
-                    min={0.005}
-                    onChange={(v) => handleUpdate({ columnDividerThickness: v })}
+                    label="Depth"
+                    min={0}
+                    onChange={(v) => handleUpdate({ sillDepth: v })}
                     precision={3}
                     step={0.01}
                     unit="m"
-                    value={Math.round((node.columnDividerThickness ?? 0.03) * 1000) / 1000}
+                    value={Math.round(node.sillDepth * 1000) / 1000}
                   />
-                </div>
-              </div>
-            )}
-
-            {numRows > 1 && (
-              <div className="mt-2 flex flex-col gap-1">
-                <div className="mb-1 px-1 font-medium text-[10px] text-muted-foreground/80 uppercase tracking-wider">
-                  Row Heights
-                </div>
-                {normRows.map((ratio, i) => (
                   <SliderControl
-                    key={`r-${i}`}
-                    label={`R${i + 1}`}
-                    max={95}
-                    min={5}
-                    onChange={(v) => setRowRatio(i, v / 100)}
-                    precision={1}
-                    step={1}
-                    unit="%"
-                    value={Math.round(ratio * 100 * 10) / 10}
-                  />
-                ))}
-                <div className="mt-1 border-border/50 border-t pt-1">
-                  <SliderControl
-                    label="Divider"
-                    max={0.1}
-                    min={0.005}
-                    onChange={(v) => handleUpdate({ rowDividerThickness: v })}
+                    label="Thickness"
+                    min={0}
+                    onChange={(v) => handleUpdate({ sillThickness: v })}
                     precision={3}
                     step={0.01}
                     unit="m"
-                    value={Math.round((node.rowDividerThickness ?? 0.03) * 1000) / 1000}
+                    value={Math.round(node.sillThickness * 1000) / 1000}
                   />
                 </div>
-              </div>
-            )}
-          </PanelSection>
-
-          <PanelSection title="Sill">
-            <ToggleControl
-              checked={node.sill}
-              label="Enable Sill"
-              onChange={(checked) => handleUpdate({ sill: checked })}
-            />
-            {node.sill && (
-              <div className="mt-1 flex flex-col gap-1">
-                <SliderControl
-                  label="Depth"
-                  min={0}
-                  onChange={(v) => handleUpdate({ sillDepth: v })}
-                  precision={3}
-                  step={0.01}
-                  unit="m"
-                  value={Math.round(node.sillDepth * 1000) / 1000}
-                />
-                <SliderControl
-                  label="Thickness"
-                  min={0}
-                  onChange={(v) => handleUpdate({ sillThickness: v })}
-                  precision={3}
-                  step={0.01}
-                  unit="m"
-                  value={Math.round(node.sillThickness * 1000) / 1000}
-                />
-              </div>
-            )}
-          </PanelSection>
+              )}
+            </PanelSection>
+          )}
         </>
       )}
 

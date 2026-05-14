@@ -8,10 +8,16 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Box3, Euler, Matrix4, Ray, Raycaster, Vector2, Vector3 } from 'three'
 import {
+  closeDoorOpenState,
   DOOR_SWING_OPEN_ANGLE,
   isOperationDoorType,
   toggleDoorOpenState,
 } from '../../lib/door-interaction'
+import {
+  closeWindowOpenState,
+  isOperableWindowType,
+  toggleWindowOpenState,
+} from '../../lib/window-interaction'
 import useEditor from '../../store/use-editor'
 import {
   buildFirstPersonColliderWorldFromRegistry,
@@ -55,6 +61,12 @@ const doorOpeningMatrix = new Matrix4()
 const doorOpeningWorldHit = new Vector3()
 const spawnWorldPosition = new Vector3()
 const spawnWorldEuler = new Euler(0, 0, 0, 'YXZ')
+const windowInteractionRaycaster = new Raycaster()
+
+type FirstPersonInteractableTarget = {
+  id: AnyNodeId
+  type: 'door' | 'window'
+}
 
 const resolvePlacedSpawnNode = (
   nodes: ReturnType<typeof useScene.getState>['nodes'],
@@ -73,7 +85,7 @@ export const FirstPersonControls = () => {
   const controllerRef = useRef<BVHEcctrlApi | null>(null)
   const yawRef = useRef(0)
   const pitchRef = useRef(0)
-  const interactableDoorIdRef = useRef<AnyNodeId | null>(null)
+  const interactableTargetRef = useRef<FirstPersonInteractableTarget | null>(null)
   const worldRef = useRef<FirstPersonColliderWorld | null>(null)
   const [world, setWorld] = useState<FirstPersonColliderWorld | null>(null)
   const [controllerStart, setControllerStart] = useState<{
@@ -189,15 +201,94 @@ export const FirstPersonControls = () => {
     return closestDoorId
   }, [camera])
 
-  const toggleInteractableDoor = useCallback(() => {
-    const doorId = interactableDoorIdRef.current ?? resolveInteractableDoorId()
-    if (!doorId) return
+  const resolveInteractableWindowId = useCallback((): AnyNodeId | null => {
+    const nodes = useScene.getState().nodes
+    camera.updateMatrixWorld(true)
+    windowInteractionRaycaster.setFromCamera(centerScreenPoint, camera)
+
+    let closestWindowId: AnyNodeId | null = null
+    let closestDistance = DOOR_INTERACTION_DISTANCE
+
+    for (const windowId of sceneRegistry.byType.window) {
+      const node = nodes[windowId as AnyNodeId]
+      if (node?.type !== 'window') continue
+      if (node.openingKind === 'opening') continue
+      if (!isOperableWindowType(node.windowType)) continue
+
+      const object = sceneRegistry.nodes.get(windowId)
+      if (!object) continue
+
+      const hit = windowInteractionRaycaster
+        .intersectObject(object, true)
+        .find((intersection) => intersection.distance <= DOOR_INTERACTION_DISTANCE)
+      if (!(hit && hit.distance < closestDistance)) continue
+
+      closestWindowId = windowId as AnyNodeId
+      closestDistance = hit.distance
+    }
+
+    return closestWindowId
+  }, [camera])
+
+  const resolveInteractableTarget = useCallback((): FirstPersonInteractableTarget | null => {
+    const doorId = resolveInteractableDoorId()
+    if (doorId) return { id: doorId, type: 'door' }
+
+    const windowId = resolveInteractableWindowId()
+    if (windowId) return { id: windowId, type: 'window' }
+
+    return null
+  }, [resolveInteractableDoorId, resolveInteractableWindowId])
+
+  const toggleInteractableTarget = useCallback(() => {
+    const target = interactableTargetRef.current ?? resolveInteractableTarget()
+    if (!target) return
+
+    if (target.type === 'window') {
+      const node = useScene.getState().nodes[target.id]
+      if (
+        node?.type !== 'window' ||
+        node.openingKind === 'opening' ||
+        !isOperableWindowType(node.windowType)
+      ) {
+        return
+      }
+
+      toggleWindowOpenState(target.id, { persist: false })
+      return
+    }
+
+    const doorId = target.id
 
     const node = useScene.getState().nodes[doorId]
     if (node?.type !== 'door' || node.openingKind === 'opening') return
 
     toggleDoorOpenState(doorId, { persist: false })
-  }, [resolveInteractableDoorId])
+  }, [resolveInteractableTarget])
+
+  const closeInteractableTarget = useCallback(() => {
+    const target = interactableTargetRef.current ?? resolveInteractableTarget()
+    if (!target) return
+
+    if (target.type === 'window') {
+      const node = useScene.getState().nodes[target.id]
+      if (
+        node?.type !== 'window' ||
+        node.openingKind === 'opening' ||
+        !isOperableWindowType(node.windowType)
+      ) {
+        return
+      }
+
+      closeWindowOpenState(target.id, { persist: false })
+      return
+    }
+
+    const node = useScene.getState().nodes[target.id]
+    if (node?.type !== 'door' || node.openingKind === 'opening') return
+
+    closeDoorOpenState(target.id, { persist: false })
+  }, [resolveInteractableTarget])
 
   const placedSpawn = useMemo<FirstPersonSpawn | null>(() => {
     if (!(placedSpawnNode && placedSpawnNode.type === 'spawn')) return null
@@ -240,7 +331,11 @@ export const FirstPersonControls = () => {
 
   useEffect(() => {
     emitter.on('door:animation-completed', rebuildColliderWorld)
-    return () => emitter.off('door:animation-completed', rebuildColliderWorld)
+    emitter.on('window:animation-completed', rebuildColliderWorld)
+    return () => {
+      emitter.off('door:animation-completed', rebuildColliderWorld)
+      emitter.off('window:animation-completed', rebuildColliderWorld)
+    }
   }, [rebuildColliderWorld])
 
   useEffect(() => {
@@ -308,7 +403,11 @@ export const FirstPersonControls = () => {
       } else if (event.code === 'KeyE' || event.code === 'KeyR') {
         event.preventDefault()
         event.stopPropagation()
-        toggleInteractableDoor()
+        toggleInteractableTarget()
+      } else if (event.code === 'KeyT') {
+        event.preventDefault()
+        event.stopPropagation()
+        closeInteractableTarget()
       }
     }
 
@@ -316,7 +415,7 @@ export const FirstPersonControls = () => {
     return () => {
       document.removeEventListener('keydown', handleKeyDown, true)
     }
-  }, [gl, toggleInteractableDoor])
+  }, [closeInteractableTarget, gl, toggleInteractableTarget])
 
   useFrame((_, delta) => {
     if (!controllerRef.current?.group) return
@@ -328,16 +427,20 @@ export const FirstPersonControls = () => {
     camera.quaternion.setFromEuler(cameraEuler)
     camera.updateMatrixWorld(true)
 
-    const nextInteractableDoorId = resolveInteractableDoorId()
-    if (interactableDoorIdRef.current !== nextInteractableDoorId) {
-      interactableDoorIdRef.current = nextInteractableDoorId
-      useViewer.getState().setHoveredId(nextInteractableDoorId)
+    const nextInteractableTarget = resolveInteractableTarget()
+    const previousInteractableTarget = interactableTargetRef.current
+    if (
+      previousInteractableTarget?.id !== nextInteractableTarget?.id ||
+      previousInteractableTarget?.type !== nextInteractableTarget?.type
+    ) {
+      interactableTargetRef.current = nextInteractableTarget
+      useViewer.getState().setHoveredId(nextInteractableTarget?.id ?? null)
     }
   })
 
   useEffect(() => {
     return () => {
-      if (useViewer.getState().hoveredId === interactableDoorIdRef.current) {
+      if (useViewer.getState().hoveredId === interactableTargetRef.current?.id) {
         useViewer.getState().setHoveredId(null)
       }
     }
@@ -352,14 +455,15 @@ export const FirstPersonControls = () => {
       {controllerStart && (
         <KeyboardControls map={keyboardMap}>
           <BVHEcctrl
-            ref={controllerRef}
-            key="first-person-controller"
+            acceleration={26}
+            airDragFactor={0.3}
             colliderCapsuleArgs={[0.25, 0.8, 4, 8]}
             colliderMeshes={[world.mesh]}
             collisionCheckIteration={3}
             collisionPushBackDamping={0.1}
             collisionPushBackThreshold={0.001}
             debug={false}
+            deceleration={30}
             delay={0}
             fallGravityFactor={4}
             floatCheckType="BOTH"
@@ -370,13 +474,12 @@ export const FirstPersonControls = () => {
             floatSpringK={1200}
             gravity={9.81}
             jumpVel={6}
+            key="first-person-controller"
             maxRunSpeed={5.5}
             maxSlope={1.2}
             maxWalkSpeed={4}
             position={controllerStart.position}
-            acceleration={26}
-            airDragFactor={0.3}
-            deceleration={30}
+            ref={controllerRef}
           />
         </KeyboardControls>
       )}
@@ -448,10 +551,12 @@ export const FirstPersonOverlay = ({ onExit }: { onExit: () => void }) => {
       {isLocked && (
         <div className="pointer-events-none fixed top-1/2 right-6 z-40 -translate-y-1/2">
           <div className="flex min-w-[148px] flex-col gap-3 rounded-2xl border border-border/35 bg-background/80 px-4 py-4 shadow-lg backdrop-blur-xl">
-            <ControlHint label="Move" keys={['W', 'A', 'S', 'D']} />
+            <ControlHint keys={['W', 'A', 'S', 'D']} label="Move" />
             <div className="h-px w-full bg-border/30" />
-            <InlineControlHint label="Jump" keyLabel="Space" />
-            <InlineControlHint label="Sprint" keyLabel="Shift" />
+            <InlineControlHint keyLabel="Space" label="Jump" />
+            <InlineControlHint keyLabel="Shift" label="Sprint" />
+            <InlineControlHint keyLabel="E / R" label="Interact" />
+            <InlineControlHint keyLabel="T" label="Close" />
             <div className="h-px w-full bg-border/30" />
             <span className="text-center text-muted-foreground/60 text-xs">
               Click to look around
@@ -486,7 +591,7 @@ function ControlHint({ label, keys }: { label: string; keys: string[] }) {
 function InlineControlHint({ label, keyLabel }: { label: string; keyLabel: string }) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <span className="font-medium text-[10px] text-muted-foreground/60 tracking-[0.03em] uppercase">
+      <span className="font-medium text-[10px] text-muted-foreground/60 uppercase tracking-[0.03em]">
         {label}
       </span>
       <kbd className="flex h-5 min-w-5 items-center justify-center rounded border border-border/50 bg-accent/40 px-1.5 font-mono text-[10px] text-foreground/80 leading-none">

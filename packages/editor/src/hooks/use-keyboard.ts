@@ -3,7 +3,12 @@ import { useViewer } from '@pascal-app/viewer'
 import { useEffect } from 'react'
 import { closeDoorOpenState, toggleDoorOpenState } from '../lib/door-interaction'
 import { runRedo, runUndo } from '../lib/history'
+import {
+  copySelectedNodesToEditorClipboard,
+  pasteEditorClipboardToLevel,
+} from '../lib/scene-clipboard'
 import { sfxEmitter } from '../lib/sfx-bus'
+import { closeWindowOpenState, toggleWindowOpenState } from '../lib/window-interaction'
 import useEditor from '../store/use-editor'
 
 // Tools call this in their onCancel handler when they have an active mid-action to cancel,
@@ -76,6 +81,7 @@ export const useKeyboard = ({
         e.preventDefault()
         useEditor.getState().setPhase('furnish')
         useEditor.getState().setMode('build')
+        useEditor.getState().setActiveSidebarPanel('items')
       } else if (e.key === 'z' && !e.metaKey && !e.ctrlKey) {
         if (isVersionPreviewMode) return
         e.preventDefault()
@@ -104,6 +110,17 @@ export const useKeyboard = ({
         useEditor.getState().setPhase('structure')
         useEditor.getState().setStructureLayer('elements')
         useEditor.getState().setMode('material-paint')
+      } else if (e.key === 'c' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
+        if (isVersionPreviewMode) return
+        e.preventDefault()
+        copySelectedNodesToEditorClipboard()
+      } else if (e.key === 'v' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
+        if (isVersionPreviewMode) return
+        e.preventDefault()
+        const result = pasteEditorClipboardToLevel()
+        if (result?.pastedIds.length) {
+          sfxEmitter.emit('sfx:item-place')
+        }
       } else if (e.key === 'z' && (e.metaKey || e.ctrlKey)) {
         if (isVersionPreviewMode) return
         e.preventDefault()
@@ -146,7 +163,7 @@ export const useKeyboard = ({
         }
       } else if ((e.key === 'r' || e.key === 'R') && !isVersionPreviewMode) {
         // Rotate selected node clockwise if it supports rotation (items, roofs, etc.)
-        // Doors use R to toggle their leaf open/closed around the hinge.
+        // Operable doors/windows use R to toggle their open/closed state.
         const selectedNodeIds = useViewer.getState().selection.selectedIds as AnyNodeId[]
         if (selectedNodeIds.length === 1) {
           const node = useScene.getState().nodes[selectedNodeIds[0]!]
@@ -156,6 +173,20 @@ export const useKeyboard = ({
               toggleDoorOpenState(node.id)
               sfxEmitter.emit('sfx:item-rotate')
             }
+          } else if (
+            node?.type === 'window' &&
+            node.openingKind !== 'opening' &&
+            (node.windowType === 'sliding' ||
+              node.windowType === 'casement' ||
+              node.windowType === 'awning' ||
+              node.windowType === 'hopper' ||
+              node.windowType === 'single-hung' ||
+              node.windowType === 'double-hung' ||
+              node.windowType === 'louvered')
+          ) {
+            e.preventDefault()
+            toggleWindowOpenState(node.id)
+            sfxEmitter.emit('sfx:item-rotate')
           } else if (node && 'rotation' in node) {
             e.preventDefault()
             const ROTATION_STEP = Math.PI / 4
@@ -182,6 +213,20 @@ export const useKeyboard = ({
               closeDoorOpenState(node.id)
               sfxEmitter.emit('sfx:item-rotate')
             }
+          } else if (
+            node?.type === 'window' &&
+            node.openingKind !== 'opening' &&
+            (node.windowType === 'sliding' ||
+              node.windowType === 'casement' ||
+              node.windowType === 'awning' ||
+              node.windowType === 'hopper' ||
+              node.windowType === 'single-hung' ||
+              node.windowType === 'double-hung' ||
+              node.windowType === 'louvered')
+          ) {
+            e.preventDefault()
+            closeWindowOpenState(node.id)
+            sfxEmitter.emit('sfx:item-rotate')
           } else if (node && 'rotation' in node) {
             e.preventDefault()
             const ROTATION_STEP = Math.PI / 4
@@ -223,6 +268,15 @@ export const useKeyboard = ({
         const selectedNodeIds = useViewer.getState().selection.selectedIds as AnyNodeId[]
 
         if (selectedNodeIds.length > 0) {
+          // Guard against accidental bulk deletion (e.g. box-select all + Delete)
+          const BULK_DELETE_THRESHOLD = 10
+          if (selectedNodeIds.length >= BULK_DELETE_THRESHOLD) {
+            const confirmed = window.confirm(
+              `Delete ${selectedNodeIds.length} selected elements? This cannot be undone if the undo history is exhausted.`,
+            )
+            if (!confirmed) return
+          }
+
           // Play appropriate SFX based on what's being deleted
           if (selectedNodeIds.length === 1) {
             const node = useScene.getState().nodes[selectedNodeIds[0]!]

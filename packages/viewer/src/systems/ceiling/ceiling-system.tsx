@@ -1,5 +1,5 @@
-import { useFrame } from '@react-three/fiber'
 import { type AnyNodeId, type CeilingNode, sceneRegistry, useScene } from '@pascal-app/core'
+import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 
 function ensureUv2Attribute(geometry: THREE.BufferGeometry) {
@@ -50,7 +50,7 @@ function updateCeilingGeometry(node: CeilingNode, mesh: THREE.Mesh) {
   const gridMesh = mesh.getObjectByName('ceiling-grid') as THREE.Mesh
   if (gridMesh) {
     gridMesh.geometry.dispose()
-    gridMesh.geometry = newGeo
+    gridMesh.geometry = newGeo.clone()
   }
 
   // Position at the ceiling height

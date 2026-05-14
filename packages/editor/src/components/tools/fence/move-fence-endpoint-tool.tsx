@@ -25,8 +25,13 @@ import {
 import { isWallLongEnough } from '../wall/wall-drafting'
 import { type FencePlanPoint, snapFenceDraftPoint } from './fence-drafting'
 
+const LINKED_FENCE_ENDPOINT_EPSILON = 0.025
+
 function samePoint(a: FencePlanPoint, b: FencePlanPoint) {
-  return a[0] === b[0] && a[1] === b[1]
+  return (
+    Math.abs(a[0] - b[0]) <= LINKED_FENCE_ENDPOINT_EPSILON &&
+    Math.abs(a[1] - b[1]) <= LINKED_FENCE_ENDPOINT_EPSILON
+  )
 }
 
 type SegmentLike = {
@@ -114,10 +119,9 @@ type LinkedFenceSnapshot = {
 function getLinkedFenceSnapshots(args: {
   fenceId: FenceNode['id']
   fenceParentId: string | null
-  originalStart: FencePlanPoint
-  originalEnd: FencePlanPoint
+  linkedPoint: FencePlanPoint
 }) {
-  const { fenceId, fenceParentId, originalStart, originalEnd } = args
+  const { fenceId, fenceParentId, linkedPoint } = args
   const { nodes } = useScene.getState()
   const snapshots: LinkedFenceSnapshot[] = []
 
@@ -130,12 +134,7 @@ function getLinkedFenceSnapshots(args: {
       continue
     }
 
-    if (
-      !samePoint(node.start, originalStart) &&
-      !samePoint(node.start, originalEnd) &&
-      !samePoint(node.end, originalStart) &&
-      !samePoint(node.end, originalEnd)
-    ) {
+    if (!samePoint(node.start, linkedPoint) && !samePoint(node.end, linkedPoint)) {
       continue
     }
 
@@ -152,24 +151,14 @@ function getLinkedFenceSnapshots(args: {
 
 function getLinkedFenceUpdates(
   linkedFences: LinkedFenceSnapshot[],
-  originalStart: FencePlanPoint,
-  originalEnd: FencePlanPoint,
-  nextStart: FencePlanPoint,
-  nextEnd: FencePlanPoint,
+  linkedPoint: FencePlanPoint,
+  nextLinkedPoint: FencePlanPoint,
 ) {
   return linkedFences.map((fence) => ({
     id: fence.id,
     curveOffset: fence.curveOffset,
-    start: samePoint(fence.start, originalStart)
-      ? nextStart
-      : samePoint(fence.start, originalEnd)
-        ? nextEnd
-        : fence.start,
-    end: samePoint(fence.end, originalStart)
-      ? nextStart
-      : samePoint(fence.end, originalEnd)
-        ? nextEnd
-        : fence.end,
+    start: samePoint(fence.start, linkedPoint) ? nextLinkedPoint : fence.start,
+    end: samePoint(fence.end, linkedPoint) ? nextLinkedPoint : fence.end,
   }))
 }
 
@@ -181,6 +170,11 @@ export const MoveFenceEndpointTool: React.FC<{ target: MovingFenceEndpoint }> = 
   const nodeIdRef = useRef(target.fence.id)
   const originalStartRef = useRef<FencePlanPoint>([...target.fence.start] as FencePlanPoint)
   const originalEndRef = useRef<FencePlanPoint>([...target.fence.end] as FencePlanPoint)
+  const originalMovingPointRef = useRef<FencePlanPoint>(
+    target.endpoint === 'start'
+      ? ([...target.fence.start] as FencePlanPoint)
+      : ([...target.fence.end] as FencePlanPoint),
+  )
   const fixedPointRef = useRef<FencePlanPoint>(
     target.endpoint === 'start'
       ? ([...target.fence.end] as FencePlanPoint)
@@ -190,8 +184,7 @@ export const MoveFenceEndpointTool: React.FC<{ target: MovingFenceEndpoint }> = 
     getLinkedFenceSnapshots({
       fenceId: target.fence.id,
       fenceParentId: target.fence.parentId ?? null,
-      originalStart: target.fence.start,
-      originalEnd: target.fence.end,
+      linkedPoint: target.endpoint === 'start' ? target.fence.start : target.fence.end,
     }),
   )
   const previewRef = useRef<{ start: FencePlanPoint; end: FencePlanPoint } | null>(null)
@@ -211,6 +204,7 @@ export const MoveFenceEndpointTool: React.FC<{ target: MovingFenceEndpoint }> = 
     const nodeId = nodeIdRef.current
     const originalStart = originalStartRef.current
     const originalEnd = originalEndRef.current
+    const originalMovingPoint = originalMovingPointRef.current
     const fixedPoint = fixedPointRef.current
     const siblings = Object.values(useScene.getState().nodes)
     const levelWalls = siblings.filter(
@@ -244,13 +238,7 @@ export const MoveFenceEndpointTool: React.FC<{ target: MovingFenceEndpoint }> = 
       const nextEnd = target.endpoint === 'end' ? movingPoint : fixedPoint
       const linkedUpdates = detachLinkedFences
         ? []
-        : getLinkedFenceUpdates(
-            linkedOriginalsRef.current,
-            originalStart,
-            originalEnd,
-            nextStart,
-            nextEnd,
-          )
+        : getLinkedFenceUpdates(linkedOriginalsRef.current, originalMovingPoint, movingPoint)
       previewRef.current = { start: nextStart, end: nextEnd }
       setCursorLocalPos([movingPoint[0], 0, movingPoint[1]])
       setAngleLabel(
@@ -303,8 +291,9 @@ export const MoveFenceEndpointTool: React.FC<{ target: MovingFenceEndpoint }> = 
       }
 
       const preview = previewRef.current ?? { start: originalStart, end: originalEnd }
-      const hasChanged =
-        !samePoint(preview.start, originalStart) || !samePoint(preview.end, originalEnd)
+      const hasChanged = !(
+        samePoint(preview.start, originalStart) && samePoint(preview.end, originalEnd)
+      )
 
       if (hasChanged && isWallLongEnough(preview.start, preview.end)) {
         wasCommitted = true
@@ -321,10 +310,8 @@ export const MoveFenceEndpointTool: React.FC<{ target: MovingFenceEndpoint }> = 
             ? []
             : getLinkedFenceUpdates(
                 linkedOriginalsRef.current,
-                originalStart,
-                originalEnd,
-                preview.start,
-                preview.end,
+                originalMovingPoint,
+                target.endpoint === 'start' ? preview.start : preview.end,
               )),
         ])
         pauseSceneHistory(useScene)
@@ -406,7 +393,7 @@ export const MoveFenceEndpointTool: React.FC<{ target: MovingFenceEndpoint }> = 
       >
         <div className="translate-y-10">
           <div
-            className={`whitespace-nowrap rounded-full border px-2 py-1 text-[11px] font-medium shadow-lg backdrop-blur-md transition-colors ${
+            className={`whitespace-nowrap rounded-full border px-2 py-1 font-medium text-[11px] shadow-lg backdrop-blur-md transition-colors ${
               altPressed
                 ? 'border-amber-500/70 bg-amber-500/15 text-amber-100'
                 : 'border-border/70 bg-background/90 text-foreground/80'
@@ -430,7 +417,7 @@ function EndpointAngleLabel({
 }) {
   return (
     <Html center position={position} style={{ pointerEvents: 'none' }} zIndexRange={[100, 0]}>
-      <div className="whitespace-nowrap rounded-full border border-border bg-background/95 px-2 py-1 font-mono text-[11px] font-semibold text-foreground shadow-lg backdrop-blur-md">
+      <div className="whitespace-nowrap rounded-full border border-border bg-background/95 px-2 py-1 font-mono font-semibold text-[11px] text-foreground shadow-lg backdrop-blur-md">
         {label}
       </div>
     </Html>

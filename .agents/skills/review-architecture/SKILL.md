@@ -8,26 +8,24 @@ allowed-tools: Bash(git *) Bash(gh *) Read Grep Glob
 
 Use this skill for architecture-sensitive Pascal reviews. The user may provide a PR URL, branch name, or ask to review the current branch.
 
-## 1. Load the Rules
+## 1. Load The Rules
 
 Read the canonical rules before reviewing any diff. They are the source of truth, not model memory:
 
-- `.codex/rules/systems.md`
-- `.codex/rules/renderers.md`
-- `.codex/rules/tools.md`
-- `.codex/rules/viewer-isolation.md`
-- `.codex/rules/layers.md`
-- `.codex/rules/selection-managers.md`
-- `.codex/rules/scene-registry.md`
-- `.codex/rules/spatial-queries.md`
-- `.codex/rules/node-schemas.md`
-- `.codex/rules/events.md`
+- `wiki/architecture/systems.md`
+- `wiki/architecture/renderers.md`
+- `wiki/architecture/tools.md`
+- `wiki/architecture/viewer-isolation.md`
+- `wiki/architecture/layers.md`
+- `wiki/architecture/selection-managers.md`
+- `wiki/architecture/scene-registry.md`
+- `wiki/architecture/spatial-queries.md`
+- `wiki/architecture/node-schemas.md`
+- `wiki/architecture/events.md`
 
 The first four are required on every architecture review. Read the remaining rules when the diff touches their subject area.
 
-Compatibility files in `.codex/rules/*.md` may contain only a relative path such as `../../.cursor/rules/systems.mdc`. If so, continue reading that referenced `.cursor/rules/*.mdc` file before reviewing.
-
-## 2. Fetch the Diff
+## 2. Fetch The Diff
 
 ```bash
 # If the user gave a PR URL or number:
@@ -53,7 +51,7 @@ Before writing findings, classify every new file, type, store field, exported he
 
 - **Core**: `packages/core`
 - **Viewer**: `packages/viewer`
-- **Editor**: `packages/editor`
+- **Editor package**: `packages/editor`
 - **Host app**: `apps/editor`
 
 If a surface belongs to one layer but lives in another, flag it before downstream symptoms. Layer-boundary blockers lead the review.
@@ -111,7 +109,7 @@ Owns routes, API endpoints, app-level persistence/integration, and package compo
 - Core helpers/systems own reusable domain logic that can be expressed without Three.js.
 - Viewer systems own Three.js `BufferGeometry`, mesh/material mutation, cutouts, merged meshes, and render-side side effects.
 - Editor systems own editor-only feedback, edit affordances, labels, paint previews, and tool-related behavior.
-- Tools mutate `useScene` for committed state and `useLiveTransforms` for previews. Direct mesh transforms are allowed only under the live-drag exception in `.codex/rules/tools.md`.
+- Tools mutate `useScene` for committed state and `useLiveTransforms` for previews. Direct mesh transforms are allowed only under the live-drag exception in `wiki/architecture/tools.md`.
 - Tools may read public `useViewer` presentation state, but must not import viewer internals or place editor-only state in `useViewer`.
 
 ### C. Hook Hygiene
@@ -140,7 +138,7 @@ For each finding, include:
 
 1. File and line: `path/to/file.ts:42`
 2. The offending snippet, short enough to orient the author
-3. The rule it violates, linked to the rule file
+3. The rule it violates, linked to the wiki page
 4. A concrete proposed fix
 
 Skip formatting, import ordering, and anything CI already covers unless it hides a real behavior or architecture issue.

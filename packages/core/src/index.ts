@@ -45,6 +45,8 @@ export { getRenderableSlabPolygon } from './lib/slab-polygon'
 export {
   detectSpacesForLevel,
   initSpaceDetectionSync,
+  planAutoSlabsForLevel,
+  type AutoSlabSyncPlan,
   type Space,
   wallTouchesOthers,
 } from './lib/space-detection'
@@ -73,6 +75,8 @@ export {
   type DoorInteractiveState,
   type ItemInteractiveState,
   useInteractive,
+  type WindowAnimationState,
+  type WindowInteractiveState,
 } from './store/use-interactive'
 export { default as useLiveTransforms, type LiveTransform } from './store/use-live-transforms'
 export { clearSceneHistory, default as useScene } from './store/use-scene'
@@ -105,6 +109,15 @@ export {
   type WallMiterBoundaryPoints,
   type WallMiterData,
 } from './systems/wall/wall-mitering'
+export {
+  constrainWallMoveDeltaToAxis,
+  getPerpendicularWallMoveAxis,
+  planWallMoveJunctions,
+  type WallMoveBridgePlan,
+  type WallMoveAxis,
+  type WallMoveJunctionPlan,
+  type WallPlanPoint,
+} from './systems/wall/wall-move'
 export type { SceneGraph } from './utils/clone-scene-graph'
 export { cloneLevelSubtree, cloneSceneGraph, forkSceneGraph } from './utils/clone-scene-graph'
 export { isObject } from './utils/types'

@@ -1,6 +1,5 @@
 'use client'
 
-import { Bvh } from '@react-three/drei'
 import { Canvas, extend, type ThreeToJSXElements, useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three/webgpu'
@@ -19,6 +18,7 @@ import { SlabSystem } from '../../systems/slab/slab-system'
 import { StairSystem } from '../../systems/stair/stair-system'
 import { WallCutout } from '../../systems/wall/wall-cutout'
 import { WallSystem } from '../../systems/wall/wall-system'
+import { WindowAnimationSystem } from '../../systems/window/window-animation-system'
 import { WindowSystem } from '../../systems/window/window-system'
 import { ZoneSystem } from '../../systems/zone/zone-system'
 import { ErrorBoundary } from '../error-boundary'
@@ -27,6 +27,7 @@ import FrameLimiter from './frame-limiter'
 import { Lights } from './lights'
 import { PerfMonitor } from './perf-monitor'
 import PostProcessing, { DEFAULT_HOVER_STYLES, type HoverStyles } from './post-processing'
+import { SceneBvh } from './scene-bvh'
 import { SelectionManager } from './selection-manager'
 import { ViewerCamera } from './viewer-camera'
 
@@ -80,7 +81,7 @@ extend(THREE as any)
 const WEBGPU_RENDERER_CACHE = new WeakMap<HTMLCanvasElement, Promise<THREE.WebGPURenderer>>()
 
 /**
- * Monitors the WebGPU device for loss events and logs them.
+ * Monitors the WebGPU device for loss / uncaptured errors and logs them.
  * WebGPU device loss can happen when:
  *  - Tab is backgrounded and OS reclaims GPU
  *  - Driver crash or GPU reset
@@ -104,7 +105,7 @@ function GPUDeviceWatcher() {
 
   useEffect(() => {
     const backend = (gl as any).backend
-    const device = backend?.device as WebGPUDeviceLike | undefined
+    const device: GPUDevice | undefined = backend?.device
 
     if (!device) {
       console.warn('[viewer] No WebGPU device on backend — running on a fallback renderer.', {
@@ -116,25 +117,25 @@ function GPUDeviceWatcher() {
 
     console.log('[viewer] WebGPU device ready', {
       label: device.label,
-      features: device.features ? Array.from(device.features) : [],
+      features: Array.from(device.features ?? []),
     })
 
-    device.lost.then((info: WebGPUDeviceLossInfo) => {
+    device.lost.then((info) => {
       console.error(
-        `[viewer] WebGPU device lost: reason="${info.reason ?? 'unknown'}", message="${info.message ?? ''}". ` +
+        `[viewer] WebGPU device lost: reason="${info.reason}", message="${info.message}". ` +
           'The page must be reloaded to recover the GPU context.',
       )
     })
 
     // Uncaptured errors are normally silent (only console-warned by Chrome at
     // best). Pipe them to console.error so silent mobile crashes show up.
-    const onUncapturedError = (event: any) => {
-      console.error('[viewer] WebGPU uncaptured error:', event?.error?.message, event?.error)
+    const onUncapturedError = (event: GPUUncapturedErrorEvent) => {
+      console.error('[viewer] WebGPU uncaptured error:', event.error.message, event.error)
     }
-    device.addEventListener?.('uncapturederror', onUncapturedError)
+    device.addEventListener('uncapturederror', onUncapturedError as EventListener)
 
     return () => {
-      device.removeEventListener?.('uncapturederror', onUncapturedError)
+      device.removeEventListener('uncapturederror', onUncapturedError as EventListener)
     }
   }, [gl])
 
@@ -146,6 +147,7 @@ interface ViewerProps {
   hoverStyles?: HoverStyles
   selectionManager?: 'default' | 'custom'
   perf?: boolean
+  useBvh?: boolean
 }
 
 const Viewer: React.FC<ViewerProps> = ({
@@ -153,6 +155,7 @@ const Viewer: React.FC<ViewerProps> = ({
   hoverStyles = DEFAULT_HOVER_STYLES,
   selectionManager = 'default',
   perf = false,
+  useBvh = true,
 }) => {
   const theme = useViewer((state) => state.theme)
   return (
@@ -215,9 +218,13 @@ const Viewer: React.FC<ViewerProps> = ({
         {/* <directionalLight position={[10, 10, 5]} intensity={0.5} castShadow
           /> */}
         <Lights />
-        <Bvh>
+        {useBvh ? (
+          <SceneBvh>
+            <SceneRenderer />
+          </SceneBvh>
+        ) : (
           <SceneRenderer />
-        </Bvh>
+        )}
 
         {/* Default Systems */}
         <LevelSystem />
@@ -227,6 +234,7 @@ const Viewer: React.FC<ViewerProps> = ({
         {/* Core systems */}
         <CeilingSystem />
         <DoorAnimationSystem />
+        <WindowAnimationSystem />
         <DoorSystem />
         <FenceSystem />
         <ItemSystem />
