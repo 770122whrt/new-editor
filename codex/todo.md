@@ -1,60 +1,59 @@
 # Pascal Editor 待办
 
+## 开发环境
+
+**启动命令**：`npx turbo run dev --env-mode=loose`（不要使用根目录 `npm run dev`）
+**端口**：3002
+**详细指南**：`codex/docs/dev-environment-guide.md`
+
 ## 当前目标
 
-尽可能完成一个高保真的 `SceneGraph JSON -> GLB` 导出流程，让我们自己导出的 GLB 在视觉结果、几何结构、对象层级和尺寸上尽量接近项目浏览器端原生导出的 GLB。
+通过 Playwright 自动化浏览器原生 OBJ 导出能力，批量导出所有场景为 OBJ 文件。
 
-核心方法是先建立“标准答案”，再反向验证自己的导出能力：
+## OBJ 批量导出
 
-1. 使用项目本身的浏览器导出功能，对同一个 scene 导出一份 GLB，作为 baseline。
-2. 用脚本读取并分析 baseline GLB，得到网格、材质、节点层级、包围盒、对象命名等指标。
-3. 使用我们自己的 `SceneGraph JSON -> GLB` 导出器导出同一个 scene。
-4. 用 baseline GLB 验证我们自己的 GLB，逐步缩小差异。
+### 已完成
+- [x] 确认源码 OBJ 导出逻辑无问题（`export-manager.tsx`，与 main 分支一致）
+- [x] 编写 `codex/batch-export-obj.mjs` 批量导出脚本
+- [x] 在 `export-manager.tsx` 暴露 `window.__pascalExportOBJ`
 
-## GLB 导出基准实验
+### 进行中
+- [ ] 修复场景就绪检测：替换固定 5s 等待为 `__pascalSceneReady` 检查
+- [ ] 验证修复后导出的 OBJ 质量（roof Y 值、家具完整性、面数）
 
-- [ ] 确认项目浏览器端 GLB 导出入口：设置面板、命令面板或已有 `ExportManager`。
-- [ ] 使用同一个 MCP demo scene，在浏览器中导出一份原生 GLB，保存为 `codex/baseline-browser-export.glb`。
-- [ ] 记录导出 scene 的 ID、名称、节点数量、导出时间和浏览器端操作路径。
-- [ ] 编写 GLB 检查脚本，读取 GLB 并输出节点数量、mesh 数量、material 数量、texture 数量、总包围盒和主要对象层级。
-- [ ] 对 baseline GLB 生成结构报告，保存为 `codex/baseline-glb-inspection.md`。
-- [ ] 确认 baseline GLB 能被 Three.js loader 或 `gltf-transform` 正常读取。
+### 待做
+- [ ] 全量批量导出所有场景
+- [ ] 导出报告和统计
 
-## 自研 JSON 到 GLB 导出
+## 场景就绪检测问题记录
 
-- [ ] 将当前 `codex/export-scene-to-glb.mjs` 从临时脚本整理成可测试模块。
-- [ ] 明确输入格式：从项目 API 或本地 JSON 读取完整 SceneGraph。
-- [ ] 明确输出格式：GLB 2.0 二进制文件，不是 BIM/IFC/RVT。
-- [ ] 把 `SceneGraph JSON -> Three.js Object3D -> GLTFExporter -> GLB` 作为主流程。
-- [ ] 尽量复用项目里的真实几何、材质和坐标逻辑；不能复用时，记录简化点和差异原因。
-- [ ] 逐类补齐导出对象：墙、地板、天花、屋顶、门、窗、楼梯、家具、场地辅助对象。
-- [ ] 为每类对象保留稳定命名，让 GLB 中的对象能追溯回原始 scene node ID。
+### 问题
+Playwright 导出时场景未完全就绪，导致：
+1. **Roof Y=-7111**：roof 系统节流（`MAX_ROOFS_PER_FRAME=1`），5s 不够
+2. **家具缺失**：外部 GLB 模型（Sofa、Chair、TV Stand）未加载完
 
-## Baseline 对比测试目标
+### 正确 OBJ 基准（手动浏览器导出）
+- 文件：`codex/model_2026-05-14.obj`
+- 面数：2,009
+- Y 范围：-0.05 ~ 7.11
+- 对象：floor, walls, ceiling-grid, sofa_005, armchair_002, tv_wall_016, merged-roof 等
 
-- [ ] 合法性测试：自研 GLB 文件头必须是 `glTF`，版本必须是 2，文件能被 loader 成功解析。
-- [ ] 覆盖率测试：同一个 scene 中的主要 node 类型都应在自研 GLB 中出现。
-- [ ] 几何尺寸测试：房间外轮廓、墙长、墙高、墙厚、层高、屋顶范围与 baseline 接近。
-- [ ] 坐标测试：模型朝向、中心点、楼层高度和左右关系不能反向或错位。
-- [ ] 结构测试：自研 GLB 的 mesh/material/node 数量与 baseline 的差距要可解释。
-- [ ] 视觉测试：在固定相机角度下渲染 baseline 和自研 GLB，比较截图差异。
-- [ ] 回归测试：固定 demo scene 的导出结果不能突然丢失墙、屋顶、门窗或家具。
+### 我们导出的 OBJ（修复前）
+- 文件：`codex/exports/6277f322fd6f.obj`
+- 面数：1,201
+- Y 范围：-7114 ~ 2.85
+- 问题：roof Y 错误、家具对象缺失
 
-## 通过标准
+### 修复方案
+1. `export-manager.tsx` 暴露 `__pascalSceneReady()` 检查 scene-renderer 下 mesh 数量
+2. `batch-export-obj.mjs` 用 `waitForFunction` 等待就绪 + 2s 缓冲
 
-- [ ] 第一阶段通过：能稳定拿到项目浏览器端 baseline GLB，并能解析出结构报告。
-- [ ] 第二阶段通过：自研 GLB 合法、可打开、主要建筑构件完整。
-- [ ] 第三阶段通过：自研 GLB 的主要包围盒、对象覆盖率和固定视角截图与 baseline 接近。
-- [ ] 第四阶段通过：文档明确说明哪些部分已经高保真复刻，哪些部分仍是简化实现。
+## MCP 场景数据
 
-## MCP 场景工作流
+- 数据库路径：`%APPDATA%/Pascal/data/pascal.db`
+- MCP 场景 `6277f322fd6f`：19 节点（4 墙、1 楼板、1 天花、1 门、2 窗、3 家具、1 屋顶）
+- 导出 JSON：`codex/mcp-scene-6277f322fd6f.json`
 
-- [ ] 固化 MCP 建模流程：创建场地、建筑、楼层、房间、墙体、开口、家具、屋顶、校验、保存。
-- [ ] 统一 MCP 保存路径和浏览器应用读取路径，避免再次出现 `Scene not found`。
-- [ ] 补充一个最小可复现实例，说明如何从 MCP scene JSON 进入 GLB 导出流程。
+## GLB 导出（已暂停）
 
-## 文档与巡检
-
-- [ ] 定期检查 `AGENTS.md`、`README.md`、`wiki/architecture`、`.agents/skills` 是否和真实项目结构一致。
-- [ ] 将文档漂移检查纳入项目巡检流程。
-- [ ] 将本次 GLB 导出实验结论更新到项目 review 报告中。
+GLB 导出因 TEXCOORD_2 UV 映射问题暂停。详见 `codex/texcoord-2-issue.md`（如存在）。
