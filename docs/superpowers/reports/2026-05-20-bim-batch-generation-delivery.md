@@ -144,30 +144,44 @@ The key generated JSON files are:
 
 ## OBJ Artifact Status
 
-No `model.obj` file has been successfully saved in this workspace yet.
+Updated on 2026-05-20: the stable browser OBJ workflow is now verified.
 
-Expected OBJ path after a successful browser export:
+The successful stable output path is:
 
 ```text
-out/bim-batch/manual-smoke/samples/manual-smoke-001/model.obj
+out/bim-batch/manual-smoke-stable/samples/manual-smoke-001/model.obj
 ```
 
-What happened during validation:
-
-1. JSON-only generation succeeded.
-2. The editor dev server initially failed inside the sandbox with `spawn EPERM`.
-3. After running the editor with elevated permissions, the server became reachable at `http://localhost:3002`.
-4. A browser export attempt was made with:
+The stable run used:
 
 ```powershell
-bun packages/mcp/src/bin/pascal-bim-batch.ts --manifest out\bim-batch\manual-smoke\manifest.jsonl --out out\bim-batch\manual-smoke --editor-url http://localhost:3002
+bun packages/mcp/src/bin/pascal-bim-batch.ts --manifest out\bim-batch\manual-smoke\manifest.jsonl --out out\bim-batch\manual-smoke-stable --editor-url http://localhost:3002
 ```
 
-5. Playwright required elevated permissions to launch Chromium.
-6. After elevating Playwright, the generated SceneGraph validation still passed, but the editor upload/export path did not produce `model.obj`.
+Result:
 
-The current implementation now treats requested OBJ export as failed unless the browser exporter returns `status: "exported"`. This prevents OBJ export failures from being counted as fully successful samples.
+```text
+total: 1
+succeeded: 1
+failed: 0
+```
+
+OBJ verification:
+
+```text
+bytes: 342284
+vertices: 2984
+faces: 1275
+Y range: -0.05000000000000333 ~ 2.8749999991059303
+abnormalY: false
+```
+
+The fixed workflow is documented in:
+
+```text
+docs/superpowers/reports/2026-05-20-bim-batch-stable-workflow.md
+```
 
 ## Current Scope Boundary
 
-The delivered core is ready for JSON dataset generation and validation. Browser OBJ export has an adapter and CLI path, but the real end-to-end OBJ artifact still needs one more environment-level/export-path debugging pass before it can be claimed as producing saved OBJ files reliably on this machine.
+The delivered core is ready for JSON dataset generation, SceneGraph validation, browser SceneStore save/load, and browser-backed OBJ export. OBJ export depends on a reachable editor dev server and a shared SceneStore.

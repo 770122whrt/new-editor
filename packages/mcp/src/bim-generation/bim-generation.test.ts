@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AnyNode } from '@pascal-app/core/schema'
 import { runBimBatch } from './batch-runner'
+import { BrowserObjExporter, ensureEditorScene } from './browser-obj-exporter'
 import { parseBimBatchCliArgs } from './cli-options'
 import { generateBimSpec } from './generate-bim-spec'
 import { parseManifestLine } from './manifest-schema'
@@ -268,5 +269,57 @@ describe('BIM batch CLI options', () => {
 
   test('requires manifest and output flags', () => {
     expect(() => parseBimBatchCliArgs(['--manifest', './manifest.jsonl'])).toThrow('--out')
+  })
+})
+
+describe('Browser OBJ scene upload', () => {
+  test('continues when POST reports duplicate id but the editor can load the scene', async () => {
+    const calls: Array<{ method: string; url: string }> = []
+    const fetchImpl = async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ method: init?.method ?? 'GET', url: String(url) })
+      if (init?.method === 'POST') {
+        return new Response(JSON.stringify({ error: 'invalid' }), { status: 400 })
+      }
+      return new Response(JSON.stringify({ id: 'existing-scene' }), { status: 200 })
+    }
+
+    const result = await ensureEditorScene({
+      editorBaseUrl: 'http://localhost:3002',
+      sceneId: 'existing-scene',
+      graph: { nodes: {}, rootNodeIds: [] },
+      fetchImpl,
+    })
+
+    expect(result.ok).toBe(true)
+    expect(calls).toEqual([
+      { method: 'POST', url: 'http://localhost:3002/api/scenes' },
+      { method: 'GET', url: 'http://localhost:3002/api/scenes/existing-scene' },
+    ])
+  })
+
+  test('exports model.obj through the stable Node worker path', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pascal-browser-obj-'))
+    const sampleDir = join(dir, 'manual-smoke-001')
+    await mkdir(sampleDir, { recursive: true })
+    await writeFile(
+      join(sampleDir, 'scene-graph.json'),
+      JSON.stringify({ nodes: {}, rootNodeIds: [] }),
+    )
+
+    const exporter = new BrowserObjExporter({
+      editorBaseUrl: 'http://localhost:3002',
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ id: 'manual-smoke-001' }), { status: 201 }),
+      nodeWorker: async ({ outputPath, sceneId }) => {
+        expect(sceneId).toBe('manual-smoke-001')
+        await writeFile(outputPath, '# stable obj\n')
+      },
+    })
+
+    const result = await exporter.export(sampleDir)
+
+    expect(result.status).toBe('exported')
+    expect(result.path).toBe(join(sampleDir, 'model.obj'))
+    expect(await readFile(join(sampleDir, 'model.obj'), 'utf8')).toContain('stable obj')
   })
 })
