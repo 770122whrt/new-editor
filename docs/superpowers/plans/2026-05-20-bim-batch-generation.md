@@ -426,3 +426,302 @@ Expected:
 ## Scope Notes
 
 This plan executes the first stable core of the approved design: manifest normalization, BIM Spec JSON, Pascal SceneGraph JSON, validation, reports, CLI entrypoint, and a clean OBJ export boundary. Full Playwright-driven browser OBJ automation remains behind the adapter boundary so it can be implemented without changing generation semantics.
+
+---
+
+## Follow-up Phase: Batch Scale-Out And QA
+
+**Goal:** Expand the verified single-sample stable workflow into a repeatable small-batch workflow that can generate, export, and quality-check many OBJ files.
+
+**Architecture:** Keep using the existing `packages/mcp/src/bim-generation/` pipeline. Add small, focused utilities for manifest generation and OBJ quality reporting instead of changing the core generator or editor export internals.
+
+**Stable Workflow Baseline:**
+
+```powershell
+bun packages/mcp/src/bin/pascal-bim-batch.ts --manifest out\bim-batch\manual-smoke\manifest.jsonl --out out\bim-batch\manual-smoke-stable --editor-url http://localhost:3002
+```
+
+Expected baseline result:
+
+```text
+total: 1
+succeeded: 1
+failed: 0
+model.obj exists
+```
+
+### Task 8: Small Batch Manifest Set
+
+**Files:**
+- Create: `out/bim-batch/manifests/small-batch-001.jsonl`
+- Reference: `out/bim-batch/manual-smoke/manifest.jsonl`
+- Document: `docs/superpowers/reports/2026-05-20-bim-batch-stable-workflow-zh.md`
+
+- [ ] **Step 1: Create 20 manifest rows**
+
+Create a JSONL file with 20 rows. The set must be intentionally diverse rather than 20 near-duplicates. Cover different gross areas, bedroom counts, bathroom counts, size constraints, style hints, and natural-language briefs. Each row must include:
+
+```json
+{
+  "id": "house-0001",
+  "seed": 2026052001,
+  "brief": "A compact one-bedroom single-story simple modern house.",
+  "target": {
+    "buildingType": "single_family_house",
+    "stories": 1,
+    "grossAreaM2": 60,
+    "bedrooms": 1,
+    "bathrooms": 1,
+    "style": "simple_modern"
+  },
+  "constraints": {
+    "includeRoof": true,
+    "includeFurniture": false,
+    "maxWidthM": 10,
+    "maxDepthM": 8
+  }
+}
+```
+
+Vary these fields across the 20 rows:
+
+- `id`
+- `seed`
+- `brief`
+- `grossAreaM2`
+- `bedrooms`
+- `bathrooms`
+- `style`
+- `maxWidthM`
+- `maxDepthM`
+
+The 20-row set should include at least:
+
+- 5 compact houses under 70 m2.
+- 8 medium houses between 70 and 110 m2.
+- 4 larger single-story houses above 110 m2.
+- 3 edge-case rows with tight width/depth constraints.
+- Several brief variations, such as simple modern, courtyard-like, narrow lot, family-oriented, and export-ready minimal geometry.
+
+- [ ] **Step 2: Validate JSONL syntax**
+
+Run:
+
+```powershell
+bun -e "const fs=await import('node:fs/promises'); const p='out/bim-batch/manifests/small-batch-001.jsonl'; const lines=(await fs.readFile(p,'utf8')).trim().split(/\r?\n/); for (const [i,l] of lines.entries()) JSON.parse(l); console.log(lines.length)"
+```
+
+Expected:
+
+```text
+20
+```
+
+### Task 9: Small Batch Export Run
+
+**Files:**
+- Input: `out/bim-batch/manifests/small-batch-001.jsonl`
+- Output: `out/bim-batch/small-batch-001/`
+- Report: `out/bim-batch/small-batch-001/report.json`
+
+- [ ] **Step 1: Start editor**
+
+Run:
+
+```powershell
+bun run --cwd apps/editor dev
+```
+
+Expected editor URL:
+
+```text
+http://localhost:3002
+```
+
+- [ ] **Step 2: Check editor API**
+
+Run:
+
+```powershell
+bun -e "const r=await fetch('http://localhost:3002/api/scenes?limit=1'); console.log(r.status)"
+```
+
+Expected:
+
+```text
+200
+```
+
+- [ ] **Step 3: Run batch export**
+
+Run:
+
+```powershell
+bun packages/mcp/src/bin/pascal-bim-batch.ts --manifest out\bim-batch\manifests\small-batch-001.jsonl --out out\bim-batch\small-batch-001 --editor-url http://localhost:3002
+```
+
+Expected:
+
+```json
+{
+  "total": 20,
+  "failed": 0
+}
+```
+
+- [ ] **Step 4: Inspect failures if any**
+
+Run:
+
+```powershell
+Get-Content out\bim-batch\small-batch-001\report.json
+```
+
+If any sample failed, inspect:
+
+```text
+out/bim-batch/small-batch-001/samples/<sample-id>/validation.json
+out/bim-batch/small-batch-001/samples/<sample-id>/scene-graph.json
+```
+
+### Task 10: OBJ Quality Report
+
+**Files:**
+- Create: `packages/mcp/src/bim-generation/obj-quality-report.ts`
+- Test: `packages/mcp/src/bim-generation/bim-generation.test.ts`
+- Output: `out/bim-batch/small-batch-001/obj-quality-report.json`
+
+- [ ] **Step 1: Add failing OBJ quality parser test**
+
+Add a test that writes a minimal OBJ file:
+
+```text
+v 0 0 0
+v 1 0 0
+v 0 1 0
+f 1 2 3
+```
+
+Expected parsed result:
+
+```json
+{
+  "vertices": 3,
+  "faces": 1,
+  "abnormalY": false
+}
+```
+
+Run:
+
+```powershell
+bun test packages/mcp/src/bim-generation/bim-generation.test.ts
+```
+
+Expected: FAIL because `obj-quality-report.ts` does not exist.
+
+- [ ] **Step 2: Implement OBJ quality parser**
+
+Create a parser that reads `model.obj` and reports:
+
+```ts
+export type ObjQuality = {
+  path: string
+  bytes: number
+  vertices: number
+  faces: number
+  yRange: [number, number]
+  abnormalY: boolean
+  empty: boolean
+}
+```
+
+Rules:
+
+- `empty` is true when `vertices === 0 || faces === 0`.
+- `abnormalY` is true when `minY < -1000 || maxY > 1000`.
+
+- [ ] **Step 3: Add batch directory quality aggregation**
+
+Add a helper that scans:
+
+```text
+out/bim-batch/<batch>/samples/*/model.obj
+```
+
+and writes:
+
+```text
+out/bim-batch/<batch>/obj-quality-report.json
+```
+
+- [ ] **Step 4: Run tests**
+
+Run:
+
+```powershell
+bun test packages/mcp/src/bim-generation/bim-generation.test.ts
+```
+
+Expected:
+
+```text
+pass
+```
+
+### Task 11: Batch Decision Gate
+
+**Files:**
+- Read: `out/bim-batch/small-batch-001/report.json`
+- Read: `out/bim-batch/small-batch-001/obj-quality-report.json`
+- Create: `docs/superpowers/reports/YYYY-MM-DD-bim-small-batch-001-report.md`
+
+- [ ] **Step 1: Summarize batch success rate**
+
+Report:
+
+```text
+total samples
+succeeded samples
+failed samples
+failure reasons
+```
+
+- [ ] **Step 2: Summarize OBJ quality**
+
+Report:
+
+```text
+min file size
+max file size
+min vertices
+max vertices
+samples with empty OBJ
+samples with abnormal Y range
+```
+
+- [ ] **Step 3: Decide next batch size**
+
+Decision rule:
+
+- If failed samples = 0 and abnormal OBJ = 0, move to 50 samples.
+- If failed samples > 0, fix generation/export failures first.
+- If abnormal OBJ > 0, debug export transform or scene readiness before scaling.
+
+### Verification For Follow-up Phase
+
+Run:
+
+```powershell
+bun test packages/mcp/src/bim-generation/bim-generation.test.ts
+bun run --cwd packages/mcp build
+bunx biome check packages/mcp/src/bim-generation packages/mcp/src/bin/pascal-bim-batch.ts packages/mcp/package.json
+```
+
+Expected:
+
+```text
+tests pass
+build passes
+biome check passes
+```

@@ -33,6 +33,27 @@
 - [ ] 为正式批量导出补充更严格的资源就绪信号，覆盖外部 GLB item 加载完成状态
 - [ ] 决定是否重新归档修复前异常 OBJ 样本，用于长期回归对比
 
+## BIM 批量生成下一阶段
+
+### 已完成
+
+- [x] 跑通 `manifest.jsonl -> bim-spec.json -> scene-graph.json -> model.obj` 的稳定闭环
+- [x] 确认生成的 SceneGraph 可以保存到 editor 使用的 SceneStore
+- [x] 确认浏览器可以通过 `/scene/<scene-id>` 读取并导出 OBJ
+- [x] 修复批处理 CLI 中 Bun 直接启动 Playwright 不稳定的问题，改为 Node worker 导出
+- [x] 生成稳定样例：`out/bim-batch/manual-smoke-stable/samples/manual-smoke-001/model.obj`
+- [x] 编写中文稳定流程说明和周报式汇报文档
+
+### 待做
+
+- [ ] 构造 20 条小批量 `manifest.jsonl`，要求样本具备多样性，覆盖不同面积、卧室数、卫生间数、尺寸约束、风格倾向和 brief
+- [ ] 运行小批量导出：`bun packages/mcp/src/bin/pascal-bim-batch.ts --manifest <manifest> --out <out> --editor-url http://localhost:3002`
+- [ ] 编写 OBJ 质量检查脚本，统计每个 `model.obj` 的文件大小、顶点数、面数、坐标范围和空模型风险
+- [ ] 汇总小批量 `report.json` 和 OBJ 质量结果，形成一份 batch QA 报告
+- [ ] 根据小批量结果决定是否扩大到 50 条、100 条，再进入更大规模批量生成
+- [ ] 如果小批量失败率较高，优先修复 manifest 生成规则、SceneGraph 转换规则或浏览器资源就绪判断
+- [ ] 将稳定批量命令、输入字段规范、输出目录规范写入长期使用文档
+
 ## 验证记录
 
 - 单测：`bun test packages/viewer/src/systems/level/level-system.test.ts`，结果通过
