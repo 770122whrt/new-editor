@@ -7,6 +7,7 @@ import { runBimBatch } from './batch-runner'
 import { BrowserObjExporter, ensureEditorScene } from './browser-obj-exporter'
 import { parseBimBatchCliArgs } from './cli-options'
 import { generateBimSpec } from './generate-bim-spec'
+import { countIfcEntities, exportBimSpecToIfc } from './ifc-exporter'
 import { parseManifestLine } from './manifest-schema'
 import { convertBimSpecToSceneGraph } from './scenegraph-converter'
 import { validateGeneratedScene } from './validate-generated-scene'
@@ -131,6 +132,55 @@ describe('Generated SceneGraph validation', () => {
   })
 })
 
+describe('BIM Spec to IFC export', () => {
+  test('exports deterministic IFC4 text with semantic building entities', () => {
+    const spec = generateBimSpec(
+      parseManifestLine(
+        JSON.stringify({
+          id: 'sample-ifc',
+          seed: 126,
+          brief: 'A compact single-story house for IFC export.',
+          target: {
+            buildingType: 'single_family_house',
+            stories: 1,
+            grossAreaM2: 80,
+            bedrooms: 2,
+            bathrooms: 1,
+          },
+          constraints: { includeRoof: true },
+        }),
+        1,
+      ),
+    )
+
+    const ifcText = exportBimSpecToIfc(spec)
+    const secondIfcText = exportBimSpecToIfc(spec)
+    const counts = countIfcEntities(ifcText)
+
+    expect(ifcText).toBe(secondIfcText)
+    expect(ifcText).toContain("FILE_SCHEMA(('IFC4'))")
+    expect(ifcText).toContain('IFCPROJECT')
+    expect(ifcText).toContain('IFCSITE')
+    expect(ifcText).toContain('IFCBUILDING')
+    expect(ifcText).toContain('IFCBUILDINGSTOREY')
+    expect(ifcText).toContain('IFCSPACE')
+    expect(ifcText).toContain('IFCWALL')
+    expect(ifcText).toContain('IFCSLAB')
+    expect(ifcText).toContain('IFCDOOR')
+    expect(ifcText).toContain('IFCWINDOW')
+    expect(ifcText).toContain('IFCROOF')
+    expect(ifcText).toContain('Pset_PascalSource')
+    expect(counts.IfcProject).toBe(1)
+    expect(counts.IfcBuilding).toBe(1)
+    expect(counts.IfcBuildingStorey).toBe(1)
+    expect(counts.IfcSpace).toBe(spec.rooms.length)
+    expect(counts.IfcWall).toBeGreaterThanOrEqual(4)
+    expect(counts.IfcSlab).toBe(1)
+    expect(counts.IfcDoor).toBe(spec.openings.exteriorDoors.length)
+    expect(counts.IfcWindow).toBe(spec.openings.windows.length)
+  })
+})
+
 describe('BIM batch runner', () => {
   test('runs a JSONL batch and writes per-sample outputs plus reports', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'pascal-bim-batch-'))
@@ -234,6 +284,37 @@ describe('BIM batch runner', () => {
     expect(report.samples[0]?.status).toBe('failed')
     expect(report.samples[0]?.error).toContain('browser export unavailable')
   })
+
+  test('writes IFC output and validation when IFC export is enabled', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pascal-bim-batch-'))
+    const manifestPath = join(dir, 'manifest.jsonl')
+    const outDir = join(dir, 'out')
+    await writeFile(
+      manifestPath,
+      `${JSON.stringify({
+        id: 'sample-ifc-batch',
+        seed: 127,
+        brief: 'A compact single-story house for batch IFC export.',
+        target: {
+          buildingType: 'single_family_house',
+          stories: 1,
+          grossAreaM2: 70,
+        },
+      })}\n`,
+    )
+
+    const report = await runBimBatch({ manifestPath, outDir, exportObj: false, exportIfc: true })
+
+    expect(report.summary.succeeded).toBe(1)
+    expect(report.samples[0]?.ifc.status).toBe('exported')
+    expect(report.samples[0]?.ifc.entityCounts?.IfcProject).toBe(1)
+    expect(
+      await readFile(join(outDir, 'samples', 'sample-ifc-batch', 'model.ifc'), 'utf8'),
+    ).toContain('IFCPROJECT')
+    expect(
+      await readFile(join(outDir, 'samples', 'sample-ifc-batch', 'ifc-validation.json'), 'utf8'),
+    ).toContain('IfcWall')
+  })
 })
 
 describe('BIM batch CLI options', () => {
@@ -265,6 +346,20 @@ describe('BIM batch CLI options', () => {
     expect(options.editorBaseUrl).toBe('http://localhost:3002')
     expect(options.exportObj).toBe(true)
     expect(options.headless).toBe(false)
+  })
+
+  test('parses IFC export with JSON-only OBJ mode', () => {
+    const options = parseBimBatchCliArgs([
+      '--manifest',
+      './manifest.jsonl',
+      '--out',
+      './out/bim-batch/dev',
+      '--skip-obj',
+      '--ifc',
+    ])
+
+    expect(options.exportObj).toBe(false)
+    expect(options.exportIfc).toBe(true)
   })
 
   test('requires manifest and output flags', () => {

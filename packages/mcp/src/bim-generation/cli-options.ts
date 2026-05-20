@@ -4,7 +4,7 @@ import type { BimBatchOptions } from './batch-runner'
 export const BIM_BATCH_HELP = `pascal-bim-batch - Generate Pascal BIM batch JSON outputs
 
 USAGE:
-  pascal-bim-batch --manifest <path> --out <path> [--skip-obj]
+  pascal-bim-batch --manifest <path> --out <path> [--skip-obj] [--ifc]
 
 OPTIONS:
   --manifest <path> JSONL manifest path
@@ -12,6 +12,7 @@ OPTIONS:
   --editor-url <u>  Running editor base URL for browser OBJ export
   --headed          Show browser during OBJ export
   --skip-obj        Generate JSON and reports without OBJ export
+  --ifc             Generate IFC4 semantic BIM files
   --help            Print this help
 `
 
@@ -28,6 +29,7 @@ export function parseBimBatchCliArgs(args: string[]): BimBatchCliOptions {
       'editor-url': { type: 'string' },
       headed: { type: 'boolean', default: false },
       'skip-obj': { type: 'boolean', default: false },
+      ifc: { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
     },
   })
@@ -37,6 +39,7 @@ export function parseBimBatchCliArgs(args: string[]): BimBatchCliOptions {
       manifestPath: '',
       outDir: '',
       exportObj: false,
+      exportIfc: false,
       help: true,
     }
   }
@@ -52,6 +55,7 @@ export function parseBimBatchCliArgs(args: string[]): BimBatchCliOptions {
     manifestPath: values.manifest,
     outDir: values.out,
     exportObj: !values['skip-obj'],
+    exportIfc: values.ifc,
     editorBaseUrl: values['editor-url'],
     headless: !values.headed,
     help: false,

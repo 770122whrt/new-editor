@@ -10,6 +10,8 @@ export type {
 export { BrowserObjExporter, NotConfiguredObjExporter } from './browser-obj-exporter'
 export { BIM_BATCH_HELP, parseBimBatchCliArgs } from './cli-options'
 export { generateBimSpec } from './generate-bim-spec'
+export type { IfcEntityCounts } from './ifc-exporter'
+export { countIfcEntities, exportBimSpecToIfc } from './ifc-exporter'
 export type { NormalizedManifestRow } from './manifest-schema'
 export { parseManifestLine } from './manifest-schema'
 export { convertBimSpecToSceneGraph } from './scenegraph-converter'

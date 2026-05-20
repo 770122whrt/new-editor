@@ -1,11 +1,11 @@
-# BIM 批量生成与 OBJ 导出稳定流程说明
+# BIM 批量生成与 OBJ/IFC 导出稳定流程说明
 
 日期：2026-05-20
 分支：`OBJ514`
 
 ## 目标
 
-这份文档说明当前已经跑通的稳定流程：从批量输入数据生成建筑场景 JSON，再通过浏览器渲染导出 OBJ 文件。
+这份文档说明当前已经跑通的稳定流程：从批量输入数据生成建筑场景 JSON，再通过浏览器渲染导出 OBJ 文件，并额外导出带基础 BIM 语义的 IFC 文件。
 
 稳定链路如下：
 
@@ -17,12 +17,14 @@ manifest.jsonl
   -> 浏览器打开 /scene/<scene-id>
   -> 调用 __pascalExportOBJ()
   -> 输出 model.obj
+  -> 可选输出 model.ifc
 ```
 
 这里有两个 JSON 层级：
 
 - `bim-spec.json`：高层建筑规格，用来审计生成逻辑，不直接放进浏览器渲染。
 - `scene-graph.json`：Pascal 可渲染的场景图，是浏览器 editor 和 OBJ 导出的实际输入。
+- `model.ifc`：IFC4 STEP 文本文件，用来表达基础 BIM 语义，包括 Project、Site、Building、Storey、Space、Wall、Slab、Door、Window、Roof。
 
 ## 稳定运行的必要条件
 
@@ -116,6 +118,91 @@ bun packages/mcp/src/bin/pascal-bim-batch.ts --manifest out\bim-batch\manual-smo
 
 这里使用 Node worker 是为了绕开之前观察到的 Bun 主进程启动 Playwright Chromium 卡住的问题。
 
+## 运行 IFC 语义 BIM 导出
+
+如果只需要生成 JSON 和 IFC，不需要浏览器 OBJ 导出，可以使用：
+
+```powershell
+bun packages/mcp/src/bin/pascal-bim-batch.ts --manifest out\bim-batch\manifests\small-batch-001.jsonl --out out\bim-batch\small-batch-001-ifc --skip-obj --ifc
+```
+
+成功输出：
+
+```json
+{
+  "outDir": "out\\bim-batch\\small-batch-001-ifc",
+  "total": 20,
+  "succeeded": 20,
+  "failed": 0,
+  "report": "out\\bim-batch\\small-batch-001-ifc/report.md"
+}
+```
+
+IFC 输出目录：
+
+```text
+out/bim-batch/small-batch-001-ifc/
+```
+
+单个样本的 IFC 文件地址示例：
+
+```text
+out/bim-batch/small-batch-001-ifc/samples/small-batch-001-compact-01/model.ifc
+```
+
+对应 IFC 验证文件：
+
+```text
+out/bim-batch/small-batch-001-ifc/samples/small-batch-001-compact-01/ifc-validation.json
+```
+
+IFC v1 的语义范围是基础 BIM，不是完整专业 BIM。当前每个 `model.ifc` 至少包含：
+
+```text
+IfcProject
+IfcSite
+IfcBuilding
+IfcBuildingStorey
+IfcSpace
+IfcWall
+IfcSlab
+IfcDoor
+IfcWindow
+IfcRoof
+```
+
+本次使用 Python `ifcopenshell` 对 20 个 `model.ifc` 做了自动打开和实体计数验证，结果范围如下：
+
+```json
+{
+  "count": 20,
+  "min": {
+    "IfcProject": 1,
+    "IfcSite": 1,
+    "IfcBuilding": 1,
+    "IfcBuildingStorey": 1,
+    "IfcSpace": 4,
+    "IfcWall": 4,
+    "IfcSlab": 1,
+    "IfcDoor": 1,
+    "IfcWindow": 4,
+    "IfcRoof": 1
+  },
+  "max": {
+    "IfcProject": 1,
+    "IfcSite": 1,
+    "IfcBuilding": 1,
+    "IfcBuildingStorey": 1,
+    "IfcSpace": 10,
+    "IfcWall": 4,
+    "IfcSlab": 1,
+    "IfcDoor": 1,
+    "IfcWindow": 4,
+    "IfcRoof": 1
+  }
+}
+```
+
 ## 输出目录
 
 稳定 smoke run 的输出目录是：
@@ -169,12 +256,145 @@ OBJ 检查结果：
 
 这说明 OBJ 已经有有效顶点和面，且没有出现之前报告中提到的百万级 Y 坐标异常。
 
+## 小批量数据集测试经验
+
+在单条 smoke run 稳定后，已经继续执行了一次 20 条小规模批量数据集测试。输入文件为：
+
+```text
+out/bim-batch/manifests/small-batch-001.jsonl
+```
+
+这 20 条输入不是简单重复样本，而是覆盖了不同面积、卧室数、卫生间数、尺寸约束和 brief 类型：
+
+- 5 条 70 m2 以下的 compact house。
+- 8 条 70 到 110 m2 的 medium house。
+- 4 条 110 m2 以上的 larger single-story house。
+- 3 条 narrow lot、shallow depth 或 constrained family 类型的边界约束样本。
+- brief 覆盖 simple modern、courtyard-like、narrow lot、family-oriented、export-ready minimal geometry 等方向。
+
+先执行 JSONL 语法验证：
+
+```powershell
+bun -e "const fs=await import('node:fs/promises'); const p='out/bim-batch/manifests/small-batch-001.jsonl'; const lines=(await fs.readFile(p,'utf8')).trim().split(/\r?\n/); for (const [i,l] of lines.entries()) JSON.parse(l); console.log(lines.length)"
+```
+
+输出：
+
+```text
+20
+```
+
+再执行 JSON-only 批量生成：
+
+```powershell
+bun packages/mcp/src/bin/pascal-bim-batch.ts --manifest out\bim-batch\manifests\small-batch-001.jsonl --out out\bim-batch\small-batch-001-json-only --skip-obj
+```
+
+输出：
+
+```json
+{
+  "outDir": "out\\bim-batch\\small-batch-001-json-only",
+  "total": 20,
+  "succeeded": 20,
+  "failed": 0,
+  "report": "out\\bim-batch\\small-batch-001-json-only/report.md"
+}
+```
+
+最后执行完整浏览器 OBJ 导出：
+
+```powershell
+bun packages/mcp/src/bin/pascal-bim-batch.ts --manifest out\bim-batch\manifests\small-batch-001.jsonl --out out\bim-batch\small-batch-001 --editor-url http://localhost:3002
+```
+
+成功输出：
+
+```json
+{
+  "outDir": "out\\bim-batch\\small-batch-001",
+  "total": 20,
+  "succeeded": 20,
+  "failed": 0,
+  "report": "out\\bim-batch\\small-batch-001/report.md"
+}
+```
+
+完整输出目录：
+
+```text
+out/bim-batch/small-batch-001/
+```
+
+每个样本目录下都有：
+
+```text
+input.json
+bim-spec.json
+scene-graph.json
+validation.json
+model.obj
+model.ifc
+ifc-validation.json
+```
+
+本次 20 个 OBJ 的轻量检查范围如下：
+
+```json
+{
+  "count": 20,
+  "minBytes": 318543,
+  "maxBytes": 439043,
+  "minVertices": 2803,
+  "maxVertices": 3656,
+  "minFaces": 1208,
+  "maxFaces": 1509
+}
+```
+
+这说明当前流程已经不只是单样本可用，而是可以稳定地把一个小规模 JSONL 数据集批量转换成 OBJ 文件。
+
+同一批输入也已经验证可以转换成 IFC 语义 BIM 文件：
+
+```text
+20 条输入 -> 20 个有效 SceneGraph -> 20 个 model.ifc
+```
+
+## 本次排查经验
+
+小批量导出第一次在沙箱内运行时，20 条样本全部失败。`report.json` 显示每条样本的 SceneGraph 校验都通过：
+
+```text
+validation.valid = true
+```
+
+共同失败点是：
+
+```text
+EPERM: operation not permitted, uv_spawn 'node'
+```
+
+因此根因不是建筑数据或 SceneGraph 生成错误，而是当前执行环境不允许 Bun 进程继续派生 Node worker。授权在沙箱外执行同一条批处理命令后，20 条样本全部成功导出。
+
+后续复现时需要注意：
+
+- JSON-only 生成不需要浏览器，也不需要 Node worker。
+- 完整 OBJ 导出需要浏览器自动化，因此需要允许批处理脚本派生 Node/Playwright worker。
+- 如果出现 20/20 同类失败，应先看 `report.json` 中的共同错误，不要优先怀疑每条 manifest 数据。
+- 如果 `validation.valid=true` 但 OBJ 失败，问题大概率在保存 scene、浏览器加载、worker 权限或下载捕获环节。
+
 ## 当前实现位置
 
 稳定导出逻辑主要在：
 
 ```text
 packages/mcp/src/bim-generation/browser-obj-exporter.ts
+```
+
+IFC 导出逻辑主要在：
+
+```text
+packages/mcp/src/bim-generation/ifc-exporter.ts
 ```
 
 测试在：
@@ -233,4 +453,10 @@ bunx biome check packages/mcp/src/bim-generation/browser-obj-exporter.ts package
 
 ```powershell
 bun packages/mcp/src/bin/pascal-bim-batch.ts --manifest out\bim-batch\manual-smoke\manifest.jsonl --out out\bim-batch\manual-smoke-stable --editor-url http://localhost:3002
+```
+
+IFC 批量导出：
+
+```powershell
+bun packages/mcp/src/bin/pascal-bim-batch.ts --manifest out\bim-batch\manifests\small-batch-001.jsonl --out out\bim-batch\small-batch-001-ifc --skip-obj --ifc
 ```

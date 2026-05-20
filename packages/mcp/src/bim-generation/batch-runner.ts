@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import type { ObjExportAdapter } from './browser-obj-exporter'
 import { BrowserObjExporter, NotConfiguredObjExporter } from './browser-obj-exporter'
 import { generateBimSpec } from './generate-bim-spec'
+import { countIfcEntities, exportBimSpecToIfc, type IfcEntityCounts } from './ifc-exporter'
 import { type NormalizedManifestRow, parseManifestLine } from './manifest-schema'
 import { convertBimSpecToSceneGraph } from './scenegraph-converter'
 import { type GeneratedSceneValidation, validateGeneratedScene } from './validate-generated-scene'
@@ -11,6 +12,7 @@ export type BimBatchOptions = {
   manifestPath: string
   outDir: string
   exportObj?: boolean
+  exportIfc?: boolean
   objExporter?: ObjExportAdapter
   editorBaseUrl?: string
   headless?: boolean
@@ -26,6 +28,12 @@ export type BimBatchSampleReport = {
     status: 'skipped' | 'exported' | 'not_requested'
     path: string | null
     message: string
+  }
+  ifc: {
+    status: 'exported' | 'failed' | 'not_requested'
+    path: string | null
+    message: string
+    entityCounts: IfcEntityCounts | null
   }
 }
 
@@ -94,6 +102,16 @@ async function runSample(
     const validation = validateGeneratedScene(graph, spec)
     await writeFile(join(sampleDir, 'validation.json'), `${JSON.stringify(validation, null, 2)}\n`)
 
+    const ifc =
+      options.exportIfc === true
+        ? await exportIfcForSample(sampleDir, spec)
+        : {
+            status: 'not_requested' as const,
+            path: null,
+            message: 'IFC export was not requested for this run.',
+            entityCounts: null,
+          }
+
     const obj =
       options.exportObj === true
         ? await resolveObjExporter(options).export(sampleDir)
@@ -107,7 +125,11 @@ async function runSample(
       options.exportObj === true && obj.status !== 'exported'
         ? `OBJ export failed: ${obj.message}`
         : null
-    const isSuccessful = validation.valid && objError === null
+    const ifcError =
+      options.exportIfc === true && ifc.status !== 'exported'
+        ? `IFC export failed: ${ifc.message}`
+        : null
+    const isSuccessful = validation.valid && objError === null && ifcError === null
 
     return {
       id: input.id,
@@ -116,8 +138,9 @@ async function runSample(
       validation,
       error: isSuccessful
         ? null
-        : [validation.errors.join('; '), objError].filter(Boolean).join('; '),
+        : [validation.errors.join('; '), objError, ifcError].filter(Boolean).join('; '),
       obj,
+      ifc,
     }
   } catch (err) {
     const id = input?.id ?? fallbackId
@@ -139,7 +162,47 @@ async function runSample(
         path: null,
         message: 'OBJ export was not attempted because sample generation failed.',
       },
+      ifc: {
+        status: 'not_requested',
+        path: null,
+        message: 'IFC export was not attempted because sample generation failed.',
+        entityCounts: null,
+      },
     }
+  }
+}
+
+async function exportIfcForSample(
+  sampleDir: string,
+  spec: ReturnType<typeof generateBimSpec>,
+): Promise<BimBatchSampleReport['ifc']> {
+  const ifcPath = join(sampleDir, 'model.ifc')
+  const ifcText = exportBimSpecToIfc(spec)
+  const entityCounts = countIfcEntities(ifcText)
+  const validation = {
+    valid:
+      entityCounts.IfcProject === 1 &&
+      entityCounts.IfcBuilding === 1 &&
+      entityCounts.IfcBuildingStorey === 1 &&
+      entityCounts.IfcSpace > 0 &&
+      entityCounts.IfcWall > 0 &&
+      entityCounts.IfcSlab > 0,
+    entityCounts,
+    errors: [] as string[],
+  }
+  if (!validation.valid) {
+    validation.errors.push('IFC export is missing required semantic entities.')
+  }
+  await writeFile(ifcPath, ifcText)
+  await writeFile(
+    join(sampleDir, 'ifc-validation.json'),
+    `${JSON.stringify(validation, null, 2)}\n`,
+  )
+  return {
+    status: validation.valid ? 'exported' : 'failed',
+    path: ifcPath,
+    message: validation.valid ? 'IFC exported from Pascal BIM Spec.' : validation.errors.join('; '),
+    entityCounts,
   }
 }
 
@@ -162,11 +225,13 @@ function renderMarkdownReport(report: BimBatchReport): string {
     `- Succeeded: ${report.summary.succeeded}`,
     `- Failed: ${report.summary.failed}`,
     '',
-    '| Sample | Status | OBJ | Error |',
-    '| --- | --- | --- | --- |',
+    '| Sample | Status | OBJ | IFC | Error |',
+    '| --- | --- | --- | --- | --- |',
   ]
   for (const sample of report.samples) {
-    lines.push(`| ${sample.id} | ${sample.status} | ${sample.obj.status} | ${sample.error ?? ''} |`)
+    lines.push(
+      `| ${sample.id} | ${sample.status} | ${sample.obj.status} | ${sample.ifc.status} | ${sample.error ?? ''} |`,
+    )
   }
   return `${lines.join('\n')}\n`
 }
@@ -181,6 +246,7 @@ function renderReadme(report: BimBatchReport): string {
     '- `report.json` is the machine-readable run summary.',
     '- `samples/*/bim-spec.json` is the auditable BIM Spec layer.',
     '- `samples/*/scene-graph.json` is the Pascal-renderable model layer.',
+    '- `samples/*/model.ifc` is the IFC4 semantic BIM export when IFC export is enabled.',
     '',
     `Succeeded: ${report.summary.succeeded}/${report.summary.total}`,
     '',
