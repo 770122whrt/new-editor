@@ -232,6 +232,7 @@ The exact file placement can be adjusted during implementation, but the design i
 - Keep Pascal scene data and pure generation logic separate from browser automation.
 - Keep CLI orchestration thin.
 - Make future MCP wrapping possible without duplicating generation logic.
+- Implement the feature additively in its own folder. Existing MCP/editor/viewer/core code should be treated as reference and dependency surface, not as code to replace or restructure.
 
 ## Architecture Constraints
 
@@ -241,6 +242,7 @@ The exact file placement can be adjusted during implementation, but the design i
 - The batch generator may consume core schemas and generate SceneGraph JSON.
 - The batch generator must not move editor-only or viewer-only concepts into core.
 - Browser OBJ export automation should call existing editor hooks instead of duplicating renderer internals.
+- The first implementation should avoid broad edits to existing packages. Aside from a thin CLI/package-script connection if needed, new behavior should live under the new BIM generation folder.
 
 ## Success Criteria
 
