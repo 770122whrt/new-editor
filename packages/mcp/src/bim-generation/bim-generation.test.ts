@@ -198,6 +198,41 @@ describe('BIM batch runner', () => {
       'mock obj',
     )
   })
+
+  test('marks the sample failed when requested OBJ export is skipped', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pascal-bim-batch-'))
+    const manifestPath = join(dir, 'manifest.jsonl')
+    const outDir = join(dir, 'out')
+    await writeFile(
+      manifestPath,
+      `${JSON.stringify({
+        id: 'sample-obj-skipped',
+        seed: 125,
+        brief: 'A compact single-story house for failed OBJ export.',
+        target: {
+          buildingType: 'single_family_house',
+          stories: 1,
+          grossAreaM2: 70,
+        },
+      })}\n`,
+    )
+
+    const report = await runBimBatch({
+      manifestPath,
+      outDir,
+      exportObj: true,
+      objExporter: {
+        async export() {
+          return { status: 'skipped', path: null, message: 'browser export unavailable' }
+        },
+      },
+    })
+
+    expect(report.summary.succeeded).toBe(0)
+    expect(report.summary.failed).toBe(1)
+    expect(report.samples[0]?.status).toBe('failed')
+    expect(report.samples[0]?.error).toContain('browser export unavailable')
+  })
 })
 
 describe('BIM batch CLI options', () => {

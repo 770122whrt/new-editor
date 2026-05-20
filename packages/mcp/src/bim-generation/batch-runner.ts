@@ -103,12 +103,20 @@ async function runSample(
             message: 'OBJ export was not requested for this run.',
           }
 
+    const objError =
+      options.exportObj === true && obj.status !== 'exported'
+        ? `OBJ export failed: ${obj.message}`
+        : null
+    const isSuccessful = validation.valid && objError === null
+
     return {
       id: input.id,
-      status: validation.valid ? 'succeeded' : 'failed',
+      status: isSuccessful ? 'succeeded' : 'failed',
       sampleDir,
       validation,
-      error: validation.valid ? null : validation.errors.join('; '),
+      error: isSuccessful
+        ? null
+        : [validation.errors.join('; '), objError].filter(Boolean).join('; '),
       obj,
     }
   } catch (err) {
