@@ -161,6 +161,43 @@ describe('BIM batch runner', () => {
     ).toContain('"nodes"')
     expect(await readFile(join(outDir, 'report.md'), 'utf8')).toContain('sample-0005')
   })
+
+  test('uses an injected OBJ exporter when export is enabled', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pascal-bim-batch-'))
+    const manifestPath = join(dir, 'manifest.jsonl')
+    const outDir = join(dir, 'out')
+    await writeFile(
+      manifestPath,
+      `${JSON.stringify({
+        id: 'sample-obj',
+        seed: 124,
+        brief: 'A compact single-story house for OBJ export.',
+        target: {
+          buildingType: 'single_family_house',
+          stories: 1,
+          grossAreaM2: 70,
+        },
+      })}\n`,
+    )
+
+    const report = await runBimBatch({
+      manifestPath,
+      outDir,
+      exportObj: true,
+      objExporter: {
+        async export(sampleDir) {
+          const objPath = join(sampleDir, 'model.obj')
+          await writeFile(objPath, '# mock obj\n')
+          return { status: 'exported', path: objPath, message: 'exported by test adapter' }
+        },
+      },
+    })
+
+    expect(report.samples[0]?.obj.status).toBe('exported')
+    expect(await readFile(join(outDir, 'samples', 'sample-obj', 'model.obj'), 'utf8')).toContain(
+      'mock obj',
+    )
+  })
 })
 
 describe('BIM batch CLI options', () => {
@@ -176,6 +213,22 @@ describe('BIM batch CLI options', () => {
     expect(options.manifestPath).toBe('./manifest.jsonl')
     expect(options.outDir).toBe('./out/bim-batch/dev')
     expect(options.exportObj).toBe(false)
+  })
+
+  test('parses browser OBJ export flags', () => {
+    const options = parseBimBatchCliArgs([
+      '--manifest',
+      './manifest.jsonl',
+      '--out',
+      './out/bim-batch/dev',
+      '--editor-url',
+      'http://localhost:3002',
+      '--headed',
+    ])
+
+    expect(options.editorBaseUrl).toBe('http://localhost:3002')
+    expect(options.exportObj).toBe(true)
+    expect(options.headless).toBe(false)
   })
 
   test('requires manifest and output flags', () => {

@@ -9,6 +9,8 @@ USAGE:
 OPTIONS:
   --manifest <path> JSONL manifest path
   --out <path>      Output directory
+  --editor-url <u>  Running editor base URL for browser OBJ export
+  --headed          Show browser during OBJ export
   --skip-obj        Generate JSON and reports without OBJ export
   --help            Print this help
 `
@@ -23,6 +25,8 @@ export function parseBimBatchCliArgs(args: string[]): BimBatchCliOptions {
     options: {
       manifest: { type: 'string' },
       out: { type: 'string' },
+      'editor-url': { type: 'string' },
+      headed: { type: 'boolean', default: false },
       'skip-obj': { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
     },
@@ -48,6 +52,8 @@ export function parseBimBatchCliArgs(args: string[]): BimBatchCliOptions {
     manifestPath: values.manifest,
     outDir: values.out,
     exportObj: !values['skip-obj'],
+    editorBaseUrl: values['editor-url'],
+    headless: !values.headed,
     help: false,
   }
 }

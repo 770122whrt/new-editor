@@ -2,8 +2,12 @@ export type { BimBatchOptions, BimBatchReport, BimBatchSampleReport } from './ba
 export { runBimBatch } from './batch-runner'
 export type { BimRoom, BimSpec, RoomType } from './bim-spec-schema'
 export { BimRoomSchema, BimSpecSchema, RoomTypeSchema } from './bim-spec-schema'
-export type { ObjExportAdapter, ObjExportResult } from './browser-obj-exporter'
-export { NotConfiguredObjExporter } from './browser-obj-exporter'
+export type {
+  BrowserObjExporterOptions,
+  ObjExportAdapter,
+  ObjExportResult,
+} from './browser-obj-exporter'
+export { BrowserObjExporter, NotConfiguredObjExporter } from './browser-obj-exporter'
 export { BIM_BATCH_HELP, parseBimBatchCliArgs } from './cli-options'
 export { generateBimSpec } from './generate-bim-spec'
 export type { NormalizedManifestRow } from './manifest-schema'

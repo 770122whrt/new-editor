@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ObjExportAdapter } from './browser-obj-exporter'
-import { NotConfiguredObjExporter } from './browser-obj-exporter'
+import { BrowserObjExporter, NotConfiguredObjExporter } from './browser-obj-exporter'
 import { generateBimSpec } from './generate-bim-spec'
 import { type NormalizedManifestRow, parseManifestLine } from './manifest-schema'
 import { convertBimSpecToSceneGraph } from './scenegraph-converter'
@@ -12,6 +12,8 @@ export type BimBatchOptions = {
   outDir: string
   exportObj?: boolean
   objExporter?: ObjExportAdapter
+  editorBaseUrl?: string
+  headless?: boolean
 }
 
 export type BimBatchSampleReport = {
@@ -94,7 +96,7 @@ async function runSample(
 
     const obj =
       options.exportObj === true
-        ? await (options.objExporter ?? new NotConfiguredObjExporter()).export(sampleDir)
+        ? await resolveObjExporter(options).export(sampleDir)
         : {
             status: 'not_requested' as const,
             path: null,
@@ -131,6 +133,17 @@ async function runSample(
       },
     }
   }
+}
+
+function resolveObjExporter(options: BimBatchOptions): ObjExportAdapter {
+  if (options.objExporter) return options.objExporter
+  if (options.editorBaseUrl) {
+    return new BrowserObjExporter({
+      editorBaseUrl: options.editorBaseUrl,
+      headless: options.headless,
+    })
+  }
+  return new NotConfiguredObjExporter()
 }
 
 function renderMarkdownReport(report: BimBatchReport): string {
