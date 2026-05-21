@@ -114,7 +114,7 @@ async function runSample(
 
     const obj =
       options.exportObj === true
-        ? await resolveObjExporter(options).export(sampleDir)
+        ? await exportObjForSample(sampleDir, resolveObjExporter(options))
         : {
             status: 'not_requested' as const,
             path: null,
@@ -169,6 +169,27 @@ async function runSample(
         entityCounts: null,
       },
     }
+  }
+}
+
+async function exportObjForSample(
+  sampleDir: string,
+  exporter: ObjExportAdapter,
+): Promise<BimBatchSampleReport['obj']> {
+  const first = await exporter.export(sampleDir)
+  if (first.status === 'exported') return first
+
+  const second = await exporter.export(sampleDir)
+  if (second.status === 'exported') {
+    return {
+      ...second,
+      message: `Retry 1 recovered OBJ export after: ${first.message}`,
+    }
+  }
+
+  return {
+    ...second,
+    message: `OBJ export failed after retry. First: ${first.message}; Second: ${second.message}`,
   }
 }
 

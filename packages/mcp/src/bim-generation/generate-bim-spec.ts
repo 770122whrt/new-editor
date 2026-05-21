@@ -94,23 +94,50 @@ function buildRoomPlans(bedrooms: number, bathrooms: number): RoomPlan[] {
 }
 
 function layoutRooms(roomPlans: RoomPlan[], width: number, depth: number): BimRoom[] {
+  const minX = -width / 2
+  const maxX = width / 2
+  const minZ = -depth / 2
+  const maxZ = depth / 2
+  const hallDepth = Math.min(1.6, Math.max(1.1, depth * 0.16))
+  const publicDepth = Math.max(2.2, (depth - hallDepth) * 0.45)
+  const publicMaxZ = Math.min(maxZ - hallDepth - 1.8, minZ + publicDepth)
+  const hallMaxZ = Math.min(maxZ - 1.2, publicMaxZ + hallDepth)
+  const rooms: BimRoom[] = []
+  const publicRooms = roomPlans.filter((room) => room.type === 'living' || room.type === 'kitchen')
+  const privateRooms = roomPlans.filter(
+    (room) => room.type === 'bedroom' || room.type === 'bathroom',
+  )
+  const circulationRooms = roomPlans.filter((room) => room.type === 'circulation')
+
+  rooms.push(...layoutBand(publicRooms, minX, maxX, minZ, publicMaxZ, 0))
+  rooms.push(...layoutBand(circulationRooms, minX, maxX, publicMaxZ, hallMaxZ, rooms.length))
+  rooms.push(...layoutBand(privateRooms, minX, maxX, hallMaxZ, maxZ, rooms.length))
+  return rooms
+}
+
+function layoutBand(
+  roomPlans: RoomPlan[],
+  minX: number,
+  maxX: number,
+  minZ: number,
+  maxZ: number,
+  offset: number,
+): BimRoom[] {
+  if (roomPlans.length === 0) return []
+  const width = maxX - minX
+  const depth = maxZ - minZ
   const totalWeight = roomPlans.reduce((sum, room) => sum + room.weight, 0)
-  let cursorX = -width / 2
+  let cursorX = minX
 
   return roomPlans.map((room, index) => {
     const isLast = index === roomPlans.length - 1
-    const roomWidth = isLast ? width / 2 - cursorX : (width * room.weight) / totalWeight
+    const roomWidth = isLast ? maxX - cursorX : (width * room.weight) / totalWeight
     const x0 = cursorX
-    const x1 = Math.min(width / 2, cursorX + roomWidth)
+    const x1 = Math.min(maxX, cursorX + roomWidth)
     cursorX = x1
-    const polygon = [
-      [roundToTenth(x0), roundToTenth(-depth / 2)],
-      [roundToTenth(x1), roundToTenth(-depth / 2)],
-      [roundToTenth(x1), roundToTenth(depth / 2)],
-      [roundToTenth(x0), roundToTenth(depth / 2)],
-    ] as [number, number][]
+    const polygon = rectanglePolygonFromBounds(x0, x1, minZ, maxZ)
     return {
-      id: `${room.type}-${index + 1}`,
+      id: `${room.type}-${offset + index + 1}`,
       name: room.name,
       type: room.type,
       targetAreaM2: roundToTenth((x1 - x0) * depth),
@@ -120,11 +147,20 @@ function layoutRooms(roomPlans: RoomPlan[], width: number, depth: number): BimRo
 }
 
 function rectanglePolygon(width: number, depth: number): [number, number][] {
+  return rectanglePolygonFromBounds(-width / 2, width / 2, -depth / 2, depth / 2)
+}
+
+function rectanglePolygonFromBounds(
+  x0: number,
+  x1: number,
+  z0: number,
+  z1: number,
+): [number, number][] {
   return [
-    [roundToTenth(-width / 2), roundToTenth(-depth / 2)],
-    [roundToTenth(width / 2), roundToTenth(-depth / 2)],
-    [roundToTenth(width / 2), roundToTenth(depth / 2)],
-    [roundToTenth(-width / 2), roundToTenth(depth / 2)],
+    [roundToTenth(x0), roundToTenth(z0)],
+    [roundToTenth(x1), roundToTenth(z0)],
+    [roundToTenth(x1), roundToTenth(z1)],
+    [roundToTenth(x0), roundToTenth(z1)],
   ]
 }
 

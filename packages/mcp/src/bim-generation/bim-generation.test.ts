@@ -68,6 +68,36 @@ describe('BIM Spec generation', () => {
     expect(spec.rooms.some((room) => room.type === 'bedroom')).toBe(true)
     expect(spec.openings.exteriorDoors.length).toBeGreaterThan(0)
   })
+
+  test('generates a two-dimensional layout instead of full-depth strips', () => {
+    const spec = generateBimSpec(
+      parseManifestLine(
+        JSON.stringify({
+          id: 'layout-quality-test',
+          seed: 79,
+          brief: 'A practical medium three-bedroom house with normal room arrangement.',
+          target: {
+            buildingType: 'single_family_house',
+            stories: 1,
+            grossAreaM2: 108,
+            bedrooms: 3,
+            bathrooms: 2,
+          },
+        }),
+        1,
+      ),
+    )
+
+    const footprintZs = spec.footprint.map((point) => point[1])
+    const footprintMinZ = Math.min(...footprintZs)
+    const footprintMaxZ = Math.max(...footprintZs)
+    const fullDepthRooms = spec.rooms.filter((room) => {
+      const zs = room.polygon.map((point) => point[1])
+      return Math.min(...zs) === footprintMinZ && Math.max(...zs) === footprintMaxZ
+    })
+
+    expect(fullDepthRooms.length).toBeLessThan(spec.rooms.length)
+  })
 })
 
 describe('BIM Spec to SceneGraph conversion', () => {
@@ -128,8 +158,13 @@ describe('BIM Spec to SceneGraph conversion', () => {
     const openings = Object.values(graph.nodes).filter(
       (node) => node.type === 'door' || node.type === 'window',
     )
+    const exteriorOpenings = openings.filter(
+      (node) => node.type === 'window' || node.metadata?.openingRole === 'entry',
+    )
 
-    expect(openings.length).toBe(spec.openings.exteriorDoors.length + spec.openings.windows.length)
+    expect(exteriorOpenings.length).toBe(
+      spec.openings.exteriorDoors.length + spec.openings.windows.length,
+    )
     for (const opening of openings) {
       const wallId = opening.wallId
       expect(wallId).toBe(opening.parentId)
@@ -142,6 +177,44 @@ describe('BIM Spec to SceneGraph conversion', () => {
       expect(opening.position[0]).toBeGreaterThanOrEqual(opening.width / 2)
       expect(opening.position[0]).toBeLessThanOrEqual(wallLength - opening.width / 2)
       expect(opening.position[2]).toBe(0)
+    }
+  })
+
+  test('adds interior doors between generated rooms', () => {
+    const spec = generateBimSpec(
+      parseManifestLine(
+        JSON.stringify({
+          id: 'interior-door-test',
+          seed: 80,
+          brief: 'A medium three-bedroom house with doors connecting rooms.',
+          target: {
+            buildingType: 'single_family_house',
+            stories: 1,
+            grossAreaM2: 108,
+            bedrooms: 3,
+            bathrooms: 2,
+          },
+        }),
+        1,
+      ),
+    )
+
+    const graph = convertBimSpecToSceneGraph(spec)
+    const doors = Object.values(graph.nodes).filter((node) => node.type === 'door')
+    const interiorDoors = doors.filter((door) => {
+      const wall = door.wallId ? graph.nodes[door.wallId] : undefined
+      return wall?.type === 'wall' && wall.metadata?.role === 'interior'
+    })
+
+    expect(interiorDoors.length).toBeGreaterThanOrEqual(3)
+    for (const door of interiorDoors) {
+      const wall = door.wallId ? graph.nodes[door.wallId] : undefined
+      expect(wall?.type).toBe('wall')
+      if (!wall || wall.type !== 'wall') continue
+      const wallLength = Math.hypot(wall.end[0] - wall.start[0], wall.end[1] - wall.start[1])
+      expect(door.position[0]).toBeGreaterThanOrEqual(door.width / 2)
+      expect(door.position[0]).toBeLessThanOrEqual(wallLength - door.width / 2)
+      expect(door.position[2]).toBe(0)
     }
   })
 })
@@ -288,6 +361,48 @@ describe('BIM batch runner', () => {
     expect(await readFile(join(outDir, 'samples', 'sample-obj', 'model.obj'), 'utf8')).toContain(
       'mock obj',
     )
+  })
+
+  test('retries a skipped OBJ export once before failing the sample', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pascal-bim-batch-'))
+    const manifestPath = join(dir, 'manifest.jsonl')
+    const outDir = join(dir, 'out')
+    await writeFile(
+      manifestPath,
+      `${JSON.stringify({
+        id: 'sample-obj-retry',
+        seed: 128,
+        brief: 'A compact single-story house for transient OBJ export retry.',
+        target: {
+          buildingType: 'single_family_house',
+          stories: 1,
+          grossAreaM2: 70,
+        },
+      })}\n`,
+    )
+    let attempts = 0
+
+    const report = await runBimBatch({
+      manifestPath,
+      outDir,
+      exportObj: true,
+      objExporter: {
+        async export(sampleDir) {
+          attempts += 1
+          if (attempts === 1) {
+            return { status: 'skipped', path: null, message: 'transient browser timeout' }
+          }
+          const objPath = join(sampleDir, 'model.obj')
+          await writeFile(objPath, '# retry obj\n')
+          return { status: 'exported', path: objPath, message: 'exported after retry' }
+        },
+      },
+    })
+
+    expect(attempts).toBe(2)
+    expect(report.summary.succeeded).toBe(1)
+    expect(report.samples[0]?.obj.status).toBe('exported')
+    expect(report.samples[0]?.obj.message).toContain('Retry 1 recovered')
   })
 
   test('marks the sample failed when requested OBJ export is skipped', async () => {

@@ -51,10 +51,10 @@ export function convertBimSpecToSceneGraph(spec: BimSpec): SceneGraph {
   nodes[level.id] = level
 
   const wallIdsBySide = createExteriorWalls(spec, nodes, level.id)
-  createInteriorWalls(spec, nodes, level.id)
+  const interiorWallIds = createInteriorWalls(spec, nodes, level.id)
   createSurfaces(spec, nodes, level.id)
   createZones(spec, nodes, level.id)
-  createOpenings(spec, nodes, wallIdsBySide)
+  createOpenings(spec, nodes, wallIdsBySide, interiorWallIds)
 
   ;(level as unknown as { children: AnyNodeId[] }).children = Object.values(nodes)
     .filter((node) => node.parentId === level.id)
@@ -112,27 +112,41 @@ function createInteriorWalls(
   spec: BimSpec,
   nodes: Record<AnyNodeId, AnyNode>,
   levelId: AnyNodeId,
-): void {
-  for (let i = 1; i < spec.rooms.length; i++) {
-    const room = spec.rooms[i]
-    const firstPoint = room?.polygon[0]
-    if (!firstPoint) continue
-    const x = firstPoint[0]
-    const wall = WallNode.parse({
-      name: `Interior Partition ${i}`,
-      parentId: levelId,
-      start: [x, -spec.building.depthM / 2],
-      end: [x, spec.building.depthM / 2],
-      height: spec.building.wallHeightM,
-      thickness: spec.building.wallThicknessM,
-      interiorMaterialPreset: spec.materials.interiorWalls,
-      exteriorMaterialPreset: spec.materials.interiorWalls,
-      frontSide: 'interior',
-      backSide: 'interior',
-      metadata: { role: 'interior', source: 'bim-spec' },
-    })
-    nodes[wall.id] = wall
+): AnyNodeId[] {
+  const interiorWallIds: AnyNodeId[] = []
+  const seen = new Set<string>()
+  let index = 1
+
+  for (const room of spec.rooms) {
+    if (room.type === 'circulation') continue
+    for (let i = 0; i < room.polygon.length; i++) {
+      const start = room.polygon[i]
+      const end = room.polygon[(i + 1) % room.polygon.length]
+      if (!start || !end || isFootprintBoundaryEdge(start, end, spec.footprint)) continue
+      const key = edgeKey(start, end)
+      if (seen.has(key)) continue
+      seen.add(key)
+
+      const wall = WallNode.parse({
+        name: `Interior Partition ${index}`,
+        parentId: levelId,
+        start,
+        end,
+        height: spec.building.wallHeightM,
+        thickness: spec.building.wallThicknessM,
+        interiorMaterialPreset: spec.materials.interiorWalls,
+        exteriorMaterialPreset: spec.materials.interiorWalls,
+        frontSide: 'interior',
+        backSide: 'interior',
+        metadata: { role: 'interior', source: 'bim-spec' },
+      })
+      nodes[wall.id] = wall
+      interiorWallIds.push(wall.id)
+      index += 1
+    }
   }
+
+  return interiorWallIds
 }
 
 function createSurfaces(
@@ -181,6 +195,7 @@ function createOpenings(
   spec: BimSpec,
   nodes: Record<AnyNodeId, AnyNode>,
   wallIdsBySide: Record<CardinalWall, AnyNodeId>,
+  interiorWallIds: AnyNodeId[],
 ): void {
   for (const exteriorDoor of spec.openings.exteriorDoors) {
     const wall = nodes[wallIdsBySide[exteriorDoor.wall]]
@@ -191,7 +206,13 @@ function createOpenings(
       wallId: wall.id,
       width: exteriorDoor.widthM,
       height: 2.1,
-      position: openingPositionOnWall(wall.start, wall.end, exteriorDoor.t, exteriorDoor.widthM, 1.05),
+      position: openingPositionOnWall(
+        wall.start,
+        wall.end,
+        exteriorDoor.t,
+        exteriorDoor.widthM,
+        1.05,
+      ),
       doorCategory: 'interior',
       swingDirection: 'inward',
       metadata: { source: 'bim-spec', openingRole: 'entry' },
@@ -221,6 +242,27 @@ function createOpenings(
     wall.children = [...wall.children, windowNode.id]
     nodes[windowNode.id] = windowNode
   }
+
+  for (const wallId of interiorWallIds) {
+    const wall = nodes[wallId]
+    if (!wall || wall.type !== 'wall') continue
+    const width = 0.85
+    if (!isHorizontalWall(wall.start, wall.end)) continue
+    if (wallLength(wall.start, wall.end) < width) continue
+    const door = DoorNode.parse({
+      name: 'Interior Door',
+      parentId: wall.id,
+      wallId: wall.id,
+      width,
+      height: 2.05,
+      position: openingPositionOnWall(wall.start, wall.end, 0.5, width, 1.025),
+      doorCategory: 'interior',
+      swingDirection: 'inward',
+      metadata: { source: 'bim-spec', openingRole: 'interior' },
+    })
+    wall.children = [...wall.children, door.id]
+    nodes[door.id] = door
+  }
 }
 
 function openingPositionOnWall(
@@ -230,11 +272,66 @@ function openingPositionOnWall(
   width: number,
   height: number,
 ): [number, number, number] {
-  const length = Math.hypot(end[0] - start[0], end[1] - start[1])
+  const length = wallLength(start, end)
   const min = width / 2
   const max = length - width / 2
   const localX = max < min ? (min + max) / 2 : Math.max(min, Math.min(max, t * length))
   return [localX, height, 0]
+}
+
+function wallLength(start: [number, number], end: [number, number]): number {
+  return Math.hypot(end[0] - start[0], end[1] - start[1])
+}
+
+function isFootprintBoundaryEdge(
+  start: [number, number],
+  end: [number, number],
+  footprint: [number, number][],
+): boolean {
+  for (let i = 0; i < footprint.length; i++) {
+    const boundaryStart = footprint[i]
+    const boundaryEnd = footprint[(i + 1) % footprint.length]
+    if (!boundaryStart || !boundaryEnd) continue
+    if (
+      pointOnSegment(start, boundaryStart, boundaryEnd) &&
+      pointOnSegment(end, boundaryStart, boundaryEnd)
+    )
+      return true
+  }
+  return false
+}
+
+function isHorizontalWall(start: [number, number], end: [number, number]): boolean {
+  return Math.abs(start[1] - end[1]) < 1e-6
+}
+
+function edgeKey(start: [number, number], end: [number, number]): string {
+  const a = pointKey(start)
+  const b = pointKey(end)
+  return a < b ? `${a}|${b}` : `${b}|${a}`
+}
+
+function pointKey(point: [number, number]): string {
+  return `${point[0].toFixed(3)},${point[1].toFixed(3)}`
+}
+
+function pointsEqual(a: [number, number], b: [number, number]): boolean {
+  return Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6
+}
+
+function pointOnSegment(
+  point: [number, number],
+  start: [number, number],
+  end: [number, number],
+): boolean {
+  const cross =
+    (point[1] - start[1]) * (end[0] - start[0]) - (point[0] - start[0]) * (end[1] - start[1])
+  if (Math.abs(cross) > 1e-6) return false
+  const dot =
+    (point[0] - start[0]) * (end[0] - start[0]) + (point[1] - start[1]) * (end[1] - start[1])
+  if (dot < -1e-6) return false
+  const lengthSq = (end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2
+  return dot <= lengthSq + 1e-6
 }
 
 function capitalize(value: string): string {
