@@ -104,6 +104,46 @@ describe('BIM Spec to SceneGraph conversion', () => {
       expect(() => AnyNode.parse(node)).not.toThrow()
     }
   })
+
+  test('places generated doors and windows in wall-local coordinates', () => {
+    const spec = generateBimSpec(
+      parseManifestLine(
+        JSON.stringify({
+          id: 'opening-local-test',
+          seed: 78,
+          brief: 'A medium two-bedroom house with openings on every exterior wall.',
+          target: {
+            buildingType: 'single_family_house',
+            stories: 1,
+            grossAreaM2: 96,
+            bedrooms: 2,
+            bathrooms: 2,
+          },
+        }),
+        1,
+      ),
+    )
+
+    const graph = convertBimSpecToSceneGraph(spec)
+    const openings = Object.values(graph.nodes).filter(
+      (node) => node.type === 'door' || node.type === 'window',
+    )
+
+    expect(openings.length).toBe(spec.openings.exteriorDoors.length + spec.openings.windows.length)
+    for (const opening of openings) {
+      const wallId = opening.wallId
+      expect(wallId).toBe(opening.parentId)
+      const wall = wallId ? graph.nodes[wallId] : undefined
+      expect(wall?.type).toBe('wall')
+      if (!wall || wall.type !== 'wall') continue
+
+      const wallLength = Math.hypot(wall.end[0] - wall.start[0], wall.end[1] - wall.start[1])
+      expect(wall.children).toContain(opening.id)
+      expect(opening.position[0]).toBeGreaterThanOrEqual(opening.width / 2)
+      expect(opening.position[0]).toBeLessThanOrEqual(wallLength - opening.width / 2)
+      expect(opening.position[2]).toBe(0)
+    }
+  })
 })
 
 describe('Generated SceneGraph validation', () => {

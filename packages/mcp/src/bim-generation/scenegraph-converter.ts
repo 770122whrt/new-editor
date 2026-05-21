@@ -191,7 +191,7 @@ function createOpenings(
       wallId: wall.id,
       width: exteriorDoor.widthM,
       height: 2.1,
-      position: openingPositionOnWall(wall.start, wall.end, exteriorDoor.t, 1.05),
+      position: openingPositionOnWall(wall.start, wall.end, exteriorDoor.t, exteriorDoor.widthM, 1.05),
       doorCategory: 'interior',
       swingDirection: 'inward',
       metadata: { source: 'bim-spec', openingRole: 'entry' },
@@ -213,6 +213,7 @@ function createOpenings(
         wall.start,
         wall.end,
         windowSpec.t,
+        windowSpec.widthM,
         windowSpec.sillHeightM + windowSpec.heightM / 2,
       ),
       metadata: { source: 'bim-spec' },
@@ -226,9 +227,14 @@ function openingPositionOnWall(
   start: [number, number],
   end: [number, number],
   t: number,
+  width: number,
   height: number,
 ): [number, number, number] {
-  return [start[0] + (end[0] - start[0]) * t, height, start[1] + (end[1] - start[1]) * t]
+  const length = Math.hypot(end[0] - start[0], end[1] - start[1])
+  const min = width / 2
+  const max = length - width / 2
+  const localX = max < min ? (min + max) / 2 : Math.max(min, Math.min(max, t * length))
+  return [localX, height, 0]
 }
 
 function capitalize(value: string): string {
